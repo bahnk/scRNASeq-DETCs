@@ -1,0 +1,2779 @@
+---
+title: "SC19070"
+output:
+  html_document:
+    df_print: tibble
+    fig_caption: yes
+    toc: true
+    toc_depth: 4
+    toc_float: true
+    code_folding: hide
+---
+
+Duncan McKenzie's experiment from Adrian Hayday's lab
+
+```{r libraries, echo=TRUE, include=TRUE, results='hide', message=FALSE, warning=FALSE, cache=FALSE, strip.white=TRUE}
+library(BiocParallel)
+library(DT)
+library(Seurat)
+library(future)
+library(ggplot2)
+library(plyr)
+library(reshape)
+
+
+
+
+#library(Seurat)
+#library(future)
+#library(ggplot2)
+#library(plyr)
+#library(dplyr)
+#library(BiocParallel)
+#library(knitr)
+#library(kableExtra)
+#library(DT)
+#library(clusterProfiler)
+#library(org.Mm.eg.db)
+```
+
+# Create Seurat objects
+
+This experiment consists of two samples.
+Both of them are **Dendritic Epidermal T Cells** (DETCs) extracted from mouse and enriched by FACS.
+The two samples correspond to two different treatments:
+
+ * **MCK332A1**: IgG control
+ * **MCK332A2**: Anti-Skint1 antibody
+
+The experiment has been carried out with the 10x technology.
+Two runs of sequencing have been necessary to reach the desired depth.
+The two runs have been merged with `cellranger count` command.
+A Seurat object has been created for each sample by using `raw_feature_bc_matrix` directory.
+
+```{r seurat, echo=TRUE, include=TRUE, results='hide', message=FALSE, warning=FALSE, cache=TRUE, strip.white=TRUE}
+
+
+## SEURAT
+
+#################
+create_object <-#
+#################
+	function(
+				project,
+				sample_name,
+				path,
+				condition,
+				min_cells,
+				min_features,
+				rda
+				)
+	{
+		# import
+		sample.data <- Seurat::Read10X(data.dir=path)
+
+		# create object
+		sample <-
+			Seurat::CreateSeuratObject(
+				counts=sample.data,
+				project=condition,
+				min.cells=min_cells,
+				min.features=min_features
+				)
+
+		# add meta data
+		sample$condition <- condition
+		sample$sample <- sample_name
+
+		# save
+		attr(sample, "project") <- project
+		attr(sample, "sample") <- sample_name
+		attr(sample, "condition") <- condition
+		save(sample, file=rda)
+
+		return(sample)
+	}
+
+# output directory
+dir.create("analysis/analysis1/rda", recursive=T, showWarnings=F)
+
+# the cell ranger matrices
+cellranger_dir <- "/camp/stp/babs/working/bahn/projects"
+cellranger_dir <- file.path(cellranger_dir, "haydaya/duncan.mckenzie")
+cellranger_dir <- file.path(cellranger_dir, "021_scrnaseq_skint1_tcr_detc")
+cellranger_dir <- file.path(cellranger_dir, "output/cellranger")
+
+# MCK332A1
+path1 <- file.path(cellranger_dir, "MCK332A1/outs/filtered_feature_bc_matrix")
+sample1 <-
+	create_object(
+					  project="SC19070",
+					  sample_name="MCK332A1",
+					  path=path1,
+					  condition="IgG control",
+					  min_cells=3,
+					  min_features=200,
+					  rda="analysis/analysis1/rda/MCK332A1_seurat.rda"
+					  )
+
+# MCK332A2
+path2 <- file.path(cellranger_dir, "MCK332A2/outs/filtered_feature_bc_matrix")
+sample2 <-
+	create_object(
+					  project="SC19070",
+					  sample_name="MCK332A2",
+					  path=path2,
+					  condition="anti-Skint1",
+					  min_cells=3,
+					  min_features=200,
+					  rda="analysis/analysis1/rda/MCK332A2_seurat.rda"
+					  )
+
+```
+
+
+
+
+# Removing unwanted cells
+
+The droplets can contain doublets or dead cells, so it's necessary to remove them.
+This is done mainly by assessing the distributions of the number of genes (features) per cell.
+
+## Thresholds for doublets and dead cells
+
+It is more convenient to plot the histograms in order to set the thresholds.
+Three thresholds were set:
+
+ * the minimum number of detected genes per cell (removing dead cells or debris)
+ * the maximum number of detected genes per cell (removing doublets)
+ * the maximum percentage mitochondrial genes detected (removing apoptotic cells)
+
+```{r mitochondria, echo=TRUE, include=TRUE, results='hide', message=FALSE, warning=FALSE, cache=TRUE, strip.white=TRUE}
+
+
+## MITOCHONDRIA
+
+# output directory
+dir.create("analysis/analysis1/rda", recursive=T, showWarnings=F)
+
+# MCK332A1
+obj <- load("analysis/analysis1/rda/MCK332A1_seurat.rda")
+sample1 <- get(obj)
+sample1[["percent.mt"]] <- Seurat::PercentageFeatureSet(sample1, pattern="^mt-")
+save(sample1, file="analysis/analysis1/rda/MCK332A1_mitochondria.rda")
+
+# MCK332A2
+obj <- load("analysis/analysis1/rda/MCK332A2_seurat.rda")
+sample2 <- get(obj)
+sample2[["percent.mt"]] <- Seurat::PercentageFeatureSet(sample2, pattern="^mt-")
+save(sample2, file="analysis/analysis1/rda/MCK332A2_mitochondria.rda")
+
+```
+
+```{r filtering, echo=TRUE, include=TRUE, results='hide', message=FALSE, warning=FALSE, cache=TRUE, strip.white=TRUE}
+
+
+## FILTERING
+
+# output directory
+dir.create("analysis/analysis1/rda", recursive=T, showWarnings=F)
+
+# MCK332A1
+obj <- load("analysis/analysis1/rda/MCK332A1_mitochondria.rda")
+sample1 <- get(obj)
+sample1 <- base::subset(sample1, subset = nFeature_RNA > 500 )
+sample1 <- base::subset(sample1, subset = nFeature_RNA < 2500 )
+sample1 <- base::subset(sample1, subset = percent.mt < 12 )
+save(sample1, file="analysis/analysis1/rda/MCK332A1_filtered.rda")
+
+# MCK332A2
+obj <- load("analysis/analysis1/rda/MCK332A2_mitochondria.rda")
+sample2 <- get(obj)
+sample2 <- base::subset(sample2, subset = nFeature_RNA > 500 )
+sample2 <- base::subset(sample2, subset = nFeature_RNA < 2500 )
+sample2 <- base::subset(sample2, subset = percent.mt < 12 )
+save(sample2, file="analysis/analysis1/rda/MCK332A2_filtered.rda")
+
+```
+
+### Distributions of the genes {.tabset}
+
+Here, the generic term *features* is used instead of *gene* but it is the same thing.
+For each sample, we are plotting 3 metrics:
+
+ * the number of RNA molecules for each cell (`nCount_RNA`)
+ * the number of RNA molecules which align to a gene for each cell (`nFeature_RNA`)
+ * the percentage of RNA molecules which align to a mitochondrial gene (among those which align to a gene) for each cell (`percent.mt`)
+
+```{r violon_plot, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE}
+
+
+## VIOLON_PLOT
+
+###############
+violon_plot <-#
+###############
+	function(sample, features, ncol, point_size, colors, title, basename) {
+
+		g <- Seurat::VlnPlot(
+									sample,
+									features=features,
+									ncol=ncol,
+									cols=colors,
+									pt.size=.3
+									)
+		g <- g + geom_point(size=point_size)
+		g <- g + ggtitle(title)
+		g <- g + theme(plot.title=element_text(hjust=.5))
+
+		ggplot2::ggsave(paste0(basename, ".pdf"), g)
+		ggplot2::ggsave(paste0(basename, ".png"), g)
+
+		return(g)
+	}
+
+# output directory
+dir.create("analysis/analysis1/plots", recursive=T, showWarnings=F)
+
+# colors
+colors <- read.csv("input/plot/condition_colors.csv")
+colors <- setNames(as.character(colors[,"color"]), colors[,"condition"])
+
+# MCK332A1
+obj <- load("analysis/analysis1/rda/MCK332A1_mitochondria.rda")
+sample1 <- get(obj)
+g_vln_1 <-
+	violon_plot(
+				sample=sample1,
+				features=c("nCount_RNA","nFeature_RNA","percent.mt"),
+				ncol=3,
+				point_size=1,
+				colors=colors,
+				title="MCK332A1",
+				basename="analysis/analysis1/plots/MCK332A1_violon_plot"
+				)
+
+# MCK332A2
+obj <- load("analysis/analysis1/rda/MCK332A2_mitochondria.rda")
+sample2 <- get(obj)
+g_vln_2 <-
+	violon_plot(
+				sample=sample2,
+				features=c("nCount_RNA","nFeature_RNA","percent.mt"),
+				ncol=3,
+				point_size=1,
+				colors=colors,
+				title="MCK332A2",
+				basename="analysis/analysis1/plots/MCK332A2_violon_plot"
+				)
+
+# print plots
+cat("#### MCK332A1 {.tabset}\n\n")
+cat('<img src="analysis/analysis1/plots/MCK332A1_violon_plot.png">\n\n')
+cat("#### MCK332A2 {.tabset}\n\n")
+cat('<img src="analysis/analysis1/plots/MCK332A2_violon_plot.png">\n\n')
+
+```
+
+### Number of genes detected {.tabset}
+
+The minimum and the maximum number of genes detected were set to **500** and **2500** respectively.
+
+```{r nfeat_histo, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE}
+
+
+###################
+threshold_histo <-#
+###################
+	function(sample, column, min_thr, max_thr, bin_width, title, basename) {
+
+		g <- ggplot(sample@meta.data, aes_string(column))
+		g <- g + geom_histogram(binwidth=bin_width)
+		g <- g + geom_density(aes(y= ..count..), color="blue")
+		g <- g + geom_vline(aes(xintercept=min_thr), color="red")
+		g <- g + geom_vline(aes(xintercept=max_thr), color="red")
+		g <- g + ggtitle(title)
+		g <- g + theme(plot.title=element_text(hjust=.5))
+
+		ggplot2::ggsave(paste0(basename, ".pdf"), g)
+		ggplot2::ggsave(paste0(basename, ".png"), g)
+
+		return(g)
+	}
+
+# output directory
+dir.create("analysis/analysis1/plots", recursive=T, showWarnings=F)
+
+# MCK332A1
+obj <- load("analysis/analysis1/rda/MCK332A1_seurat.rda")
+sample1 <- get(obj)
+g_nfeat_histo_1 <-
+	threshold_histo(
+					sample=sample1,
+					column="nFeature_RNA",
+					min_thr=500,
+					max_thr=2500,
+					bin_width=100,
+					title="MCK332A1",
+					basename="analysis/analysis1/plots/MCK332A1_nfeat_histo"
+					)
+
+# MCK332A2
+obj <- load("analysis/analysis1/rda/MCK332A2_seurat.rda")
+sample2 <- get(obj)
+g_nfeat_histo_2 <-
+	threshold_histo(
+					sample=sample2,
+					column="nFeature_RNA",
+					min_thr=500,
+					max_thr=2500,
+					bin_width=100,
+					title="MCK332A2",
+					basename="analysis/analysis1/plots/MCK332A2_nfeat_histo"
+					)
+
+# print plots
+cat("#### MCK332A1 {.tabset}\n\n")
+cat('<img src="analysis/analysis1/plots/MCK332A1_nfeat_histo.png">\n\n')
+cat("#### MCK332A2 {.tabset}\n\n")
+cat('<img src="analysis/analysis1/plots/MCK332A2_nfeat_histo.png">\n\n')
+
+```
+
+### Percentage of mitochondrial genes {.tabset}
+
+The maximum percentage of mitochondrial genes was set to **12**.
+
+```{r mitoch_histo, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE}
+
+```
+
+## Relationships between metrics
+
+Plotting metrics against each other can allow to detect problems in the data.
+For example, the number of detected genes for each cell is supposed to be correlated to the number of RNA molecules.
+On the contrary, there may be a problem if the number of mitochondrial is correlated to the number of RNA molecules.
+
+### Number of genes detected {.tabset}
+
+On the plot, the correlation coefficient is in brackets.
+
+```{r nfeat_scatter, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE}
+
+
+## NFEAT_SCATTER
+
+###################
+feature_scatter <-#
+###################
+	function(sample, features, xaxis, ncol, title, point_size, colors, basename)
+	{
+
+		# create seurat plots
+		plots <-
+			lapply(features,
+					 function(feat) {
+						 Seurat::FeatureScatter(
+							sample,
+							feature1=xaxis,
+							feature2=feat,
+							pt.size=point_size,
+							cols=colors
+							)
+					 })
+
+		# add title
+		plots <-
+			lapply(plots,
+					 function(plot) {
+						 t <- paste0(title, " (", plot$labels$title, ")")
+						 plot <- plot + ggtitle(t)
+						 return(plot)
+					 })
+
+		# combined plots
+		g <- Seurat::CombinePlots(plots=plots, ncol=ncol)
+
+		# saving
+		ggplot2::ggsave(paste0(basename, ".pdf"), g)
+		ggplot2::ggsave(paste0(basename, ".png"), g)
+
+		return(g)
+	}
+
+# output directory
+dir.create("analysis/analysis1/plots", recursive=T, showWarnings=F)
+
+# colors
+colors <- read.csv("input/plot/condition_colors.csv")
+colors <- setNames(as.character(colors[,"color"]), colors[,"condition"])
+
+# MCK332A1
+obj <- load("analysis/analysis1/rda/MCK332A1_mitochondria.rda")
+sample1 <- get(obj)
+g_nfeat_scatt_1 <-
+		feature_scatter(
+		sample=sample1,
+		features="nFeature_RNA",
+		xaxis="nCount_RNA",
+		ncol=1,
+		title="MCK332A1",
+		point_size=1,
+		colors=colors,
+		basename="analysis/analysis1/plots/MCK332A1_feature_scatter_nfeat"
+		)
+
+# MCK332A2
+obj <- load("analysis/analysis1/rda/MCK332A2_mitochondria.rda")
+sample2 <- get(obj)
+g_nfeat_scatt_2 <-
+	feature_scatter(
+		sample=sample2,
+		features="nFeature_RNA",
+		xaxis="nCount_RNA",
+		ncol=1,
+		title="MCK332A2",
+		point_size=1,
+		colors=colors,
+		basename="analysis/analysis1/plots/MCK332A2_feature_scatter_nfeat"
+		)
+
+# print plots
+png1 <- "analysis/analysis1/plots/MCK332A1_feature_scatter_nfeat.png"
+png2 <- "analysis/analysis1/plots/MCK332A2_feature_scatter_nfeat.png"
+cat("#### MCK332A1 {.tabset}\n\n")
+cat(paste0('<img src="', png1, '">\n\n'))
+cat("#### MCK332A2 {.tabset}\n\n")
+cat(paste0('<img src="', png2, '">\n\n'))
+
+```
+
+### Percentage of mitochondrial genes {.tabset}
+
+On the plot, the correlation coefficient is in brackets.
+
+```{r mitoch_scatter, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE}
+
+
+## MITOCH_SCATTER
+
+###################
+feature_scatter <-#
+###################
+	function(sample, features, xaxis, ncol, title, point_size, colors, basename)
+	{
+
+		# create seurat plots
+		plots <-
+			lapply(features,
+					 function(feat) {
+						 Seurat::FeatureScatter(
+							sample,
+							feature1=xaxis,
+							feature2=feat,
+							pt.size=point_size,
+							cols=colors
+							)
+					 })
+
+		# add title
+		plots <-
+			lapply(plots,
+					 function(plot) {
+						 t <- paste0(title, " (", plot$labels$title, ")")
+						 plot + ggtitle( paste0(t) )
+					 })
+
+		# combined plots
+		g <- Seurat::CombinePlots(plots=plots, ncol=ncol)
+
+		# saving
+		ggplot2::ggsave(paste0(basename, ".pdf"), g)
+		ggplot2::ggsave(paste0(basename, ".png"), g)
+
+		return(g)
+	}
+
+# output directory
+dir.create("analysis/analysis1/plots", recursive=T, showWarnings=F)
+
+# colors
+colors <- read.csv("input/plot/condition_colors.csv")
+colors <- setNames(as.character(colors[,"color"]), colors[,"condition"])
+
+# MCK332A1
+obj <- load("analysis/analysis1/rda/MCK332A1_mitochondria.rda")
+sample1 <- get(obj)
+g_mitoch_scatter_1 <-
+	feature_scatter(
+		sample=sample1,
+		features="percent.mt",
+		xaxis="nCount_RNA",
+		ncol=1,
+		title="MCK332A1",
+		point_size=1,
+		colors=colors,
+		basename="analysis/analysis1/plots/MCK332A1_feature_scatter_mitoch"
+		)
+
+# MCK332A2
+obj <- load("analysis/analysis1/rda/MCK332A2_mitochondria.rda")
+sample2 <- get(obj)
+g_mitoch_scatter_2 <-
+	feature_scatter(
+		sample=sample2,
+		features="percent.mt",
+		xaxis="nCount_RNA",
+		ncol=1,
+		title="MCK332A2",
+		point_size=1,
+		colors=colors,
+		basename="analysis/analysis1/plots/MCK332A2_feature_scatter_mitoch"
+		)
+
+# print plots
+png1 <- "analysis/analysis1/plots/MCK332A1_feature_scatter_mitoch.png"
+png2 <- "analysis/analysis1/plots/MCK332A2_feature_scatter_mitoch.png"
+cat("#### MCK332A1 {.tabset}\n\n")
+cat(paste0('<img src="', png1, '">\n\n'))
+cat("#### MCK332A2 {.tabset}\n\n")
+cat(paste0('<img src="', png2, '">\n\n'))
+
+```
+
+
+
+
+# Normalization
+
+The counts were normalized using the `NormalizeData` function of Seurat with the `normalization.method` parameter set to ***LogNormalize***.
+This normalises the gene expression measurements for each cell by the total expression, multiplies this by a scale factor (10,000), and log-transforms the result.
+
+```{r normalization, echo=TRUE, include=TRUE, results='hide', message=FALSE, warning=FALSE, cache=TRUE, strip.white=TRUE}
+
+
+# parallelization
+BiocParallel::register(MulticoreParam(24))
+base::options(future.globals.maxSize = 1000 * 1024^2 )
+future::plan("multiprocess", workers=24)
+
+# output directory
+dir.create("analysis/analysis1/rda", recursive=T, showWarnings=F)
+
+# MCK332A1
+obj <- load("analysis/analysis1/rda/MCK332A1_filtered.rda")
+sample1 <- get(obj)
+sample1 <- Seurat::NormalizeData(sample1, normalization.method="LogNormalize")
+save(sample1, file="analysis/analysis1/rda/MCK332A1_normalized.rda")
+
+# MCK332A2
+obj <- load("analysis/analysis1/rda/MCK332A2_filtered.rda")
+sample2 <- get(obj)
+sample2 <- Seurat::NormalizeData(sample2, normalization.method="LogNormalize")
+save(sample2, file="analysis/analysis1/rda/MCK332A2_normalized.rda")
+
+```
+
+
+
+
+# Selection of the most variable genes {.tabset}
+
+The most variable genes were identified using the `FindVariableFeatures` function of Seurat with the parameters:
+
+ * `selection.method` set to ***vst***
+ * `nfeatures` (the most variable genes) set to ***2000***
+
+```{r variable_features, echo=TRUE, include=TRUE, results='hide', message=FALSE, warning=FALSE, cache=TRUE, strip.white=TRUE}
+
+
+# output directory
+dir.create("analysis/analysis1/rda", recursive=T, showWarnings=F)
+
+# MCK332A1
+obj <- load("analysis/analysis1/rda/MCK332A1_normalized.rda")
+sample1 <- get(obj)
+sample1 <-
+	Seurat::FindVariableFeatures(
+		sample1,
+		selection.method="vst",
+		nfeatures=2000
+		)
+save(sample1, file="analysis/analysis1/rda/MCK332A1_varfeats.rda")
+
+
+# MCK332A2
+obj <- load("analysis/analysis1/rda/MCK332A2_normalized.rda")
+sample2 <- get(obj)
+sample2 <-
+	Seurat::FindVariableFeatures(
+		sample2,
+		selection.method="vst",
+		nfeatures=2000
+		)
+save(sample2, file="analysis/analysis1/rda/MCK332A2_varfeats.rda")
+
+```
+
+```{r variable_features_plot, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE}
+
+
+#########################
+variable_feature_plot <-#
+#########################
+	function(sample, n_top_variable, title, basename) {
+
+		# the n most variables genes
+		topVar <- head(Seurat::VariableFeatures(sample), n_top_variable)
+
+		# plotting
+		g <- Seurat::VariableFeaturePlot(sample)
+		g <- Seurat::LabelPoints(plot=g, points=topVar, repel=T)
+		g <- g + ggtitle(title)
+		#g <- g + theme(legend.position="top", legend.direction="vertical")
+
+		# saving
+		ggplot2::ggsave(paste0(basename, ".pdf"), g)
+		ggplot2::ggsave(paste0(basename, ".png"), g)
+
+		return(g)
+	}
+
+# output directory
+dir.create("analysis/analysis1/plots", recursive=T, showWarnings=F)
+
+# MCK332A1
+obj <- load("analysis/analysis1/rda/MCK332A1_varfeats.rda")
+sample1 <- get(obj)
+g_varfeat_1 <-
+	variable_feature_plot(
+		sample=sample1,
+		n_top_variable=10,
+		title="MCK332A1",
+		basename="analysis/analysis1/plots/MCK332A1_variable_feats"
+		)
+
+# MCK332A2
+obj <- load("analysis/analysis1/rda/MCK332A2_varfeats.rda")
+sample2 <- get(obj)
+g_varfeat_2 <-
+	variable_feature_plot(
+		sample=sample2,
+		n_top_variable=10,
+		title="MCK332A2",
+		basename="analysis/analysis1/plots/MCK332A2_variable_feats"
+		)
+
+# print plots
+cat("## MCK332A1 {.tabset}\n\n")
+cat('<img src="analysis/analysis1/plots/MCK332A1_variable_feats.png">\n\n')
+cat("## MCK332A2 {.tabset}\n\n")
+cat('<img src="analysis/analysis1/plots/MCK332A2_variable_feats.png">\n\n')
+
+```
+
+
+
+
+# Integration
+
+```{r integration_anchors, echo=TRUE, include=TRUE, results='hide', message=FALSE, warning=FALSE, cache=TRUE, strip.white=TRUE}
+
+
+# parallelization
+BiocParallel::register(MulticoreParam(24))
+base::options(future.globals.maxSize = 1000 * 1024^2 )
+future::plan("multiprocess", workers=24)
+
+############################
+find_integration_anchors <-#
+############################
+	function(
+				paths,
+				first_dim,
+				last_dim,
+				features,
+				k_anchor,
+				k_filter,
+				k_score
+				)
+	{
+
+		# the ordered seurat objects
+		samples <-
+			lapply(
+					 paths,
+					 function(p) {
+						 obj <- load(p)
+						 return( get(obj) )
+					 })
+
+		names(samples) <- unlist(lapply(samples, function(s)attr(s, "sample")))
+		samples <- samples[ sort(names(samples)) ]
+
+		# run seurat
+		anchors <-
+			Seurat::FindIntegrationAnchors(
+													 object.list=samples,
+													 dims=first_dim:last_dim,
+													 anchor.features=features,
+													 k.anchor=k_anchor,
+													 k.filter=k_filter,
+													 k.score=k_score
+													 )
+
+		return(anchors)
+	}
+
+# output directory
+dir.create("analysis/analysis1/rda", recursive=T, showWarnings=F)
+
+paths <-
+	c(
+	  "analysis/analysis1/rda/MCK332A1_varfeats.rda",
+	  "analysis/analysis1/rda/MCK332A2_varfeats.rda"
+	  )
+
+both_samples <-
+	find_integration_anchors(
+		paths=paths,
+		first_dim=1,
+		last_dim=20,
+		features=2050,
+		k_anchor=5,
+		k_filter=200,
+		k_score=30
+		)
+
+save(both_samples, file="analysis/analysis1/rda/integration_anchors.rda")
+
+```
+
+```{r integrate_data, echo=TRUE, include=TRUE, results='hide', message=FALSE, warning=FALSE, cache=TRUE, strip.white=TRUE}
+
+
+# TO BE SURE!!
+BiocParallel::register(MulticoreParam(24))
+base::options(future.globals.maxSize = 1000 * 1024^2 )
+future::plan("multiprocess", workers=1)
+
+# output directories
+dir.create("analysis/analysis1/rda", recursive=T, showWarnings=F)
+dir.create("analysis/analysis1/spreadsheets", recursive=T, showWarnings=F)
+
+# load
+obj <- load("analysis/analysis1/rda/integration_anchors.rda")
+both_samples <- get(obj)
+
+# run seurat
+both_samples <-
+	Seurat::IntegrateData(
+						  anchorset=both_samples,
+						  new.assay.name="integrated",
+						  dims=1:30,
+						  k.weight=100
+						  )
+
+# order
+conditions <- readLines("input/plot/conditions.txt")
+md <- both_samples@meta.data
+md[,"condition"] <- factor(md[,"condition"], levels=conditions)
+md[,"orig.ident"] <- factor(md[,"orig.ident"], levels=conditions)
+both_samples@meta.data <- md
+
+# just to be sure Seurat will work on the integration in the future
+Seurat::DefaultAssay(both_samples) <- "integrated"
+
+# save object
+save(
+	 both_samples,
+	 file="analysis/analysis1/rda/integration_integrate_data.rda"
+	 )
+
+# save matrix
+write.csv(
+	both_samples@assays[["integrated"]]@data,
+	file="analysis/analysis1/spreadsheets/integration_integrate_data.csv"
+	)
+
+```
+
+
+
+
+
+# Scaling
+
+Here, the expression of each gene is centered and then reduced by using the `ScaleData` function of Seurat.
+
+```{r scaling, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE}
+
+
+# parallelization
+BiocParallel::register(MulticoreParam(24))
+base::options(future.globals.maxSize = 1000 * 1024^2 )
+future::plan("multiprocess", workers=24)
+
+# output directory
+dir.create("analysis/analysis1/rda", recursive=T, showWarnings=F)
+
+# MCK332A1
+obj <- load("analysis/analysis1/rda/MCK332A1_varfeats.rda")
+sample1 <- get(obj)
+all.genes <- rownames(sample1)
+sample1 <- Seurat::ScaleData(sample1, features=all.genes)
+save(sample1, file="analysis/analysis1/rda/MCK332A1_scaled.rda")
+
+# MCK332A2
+obj <- load("analysis/analysis1/rda/MCK332A2_varfeats.rda")
+sample2 <- get(obj)
+all.genes <- rownames(sample2)
+sample2 <- Seurat::ScaleData(sample2, features=all.genes)
+save(sample2, file="analysis/analysis1/rda/MCK332A2_scaled.rda")
+
+# integration
+obj <- load("analysis/analysis1/rda/integration_integrate_data.rda")
+both_samples <- get(obj)
+all.genes <- rownames(both_samples)
+both_samples <- Seurat::ScaleData(both_samples, features=all.genes)
+save(both_samples, file="analysis/analysis1/rda/integration_scaled.rda")
+
+```
+
+
+
+
+# Principal component analysis
+
+PCA analysis of the cell-cycle corrected data using variable genes.
+
+Determine the signficant PCs for further analysis.  
+
+```{r pca, echo=TRUE, include=TRUE, results='hide', message=FALSE, warning=FALSE, cache=TRUE, strip.white=TRUE}
+
+
+# output directory
+dir.create("analysis/analysis1/rda", recursive=T, showWarnings=F)
+
+# MCK332A1
+obj <- load("analysis/analysis1/rda/MCK332A1_scaled.rda")
+sample1 <- get(obj)
+feats <- Seurat::VariableFeatures(object=sample1)
+sample1 <- Seurat::RunPCA(sample1, npcs=100 , features=feats)
+save(sample1, file="analysis/analysis1/rda/MCK332A1_pca.rda")
+
+# MCK332A2
+obj <- load("analysis/analysis1/rda/MCK332A2_scaled.rda")
+sample2 <- get(obj)
+feats <- Seurat::VariableFeatures(object=sample2)
+sample2 <- Seurat::RunPCA(sample2, npcs=100 , features=feats)
+save(sample2, file="analysis/analysis1/rda/MCK332A2_pca.rda")
+
+# integration
+obj <- load("analysis/analysis1/rda/integration_scaled.rda")
+both_samples <- get(obj)
+feats <- Seurat::VariableFeatures(object=both_samples)
+both_samples <- Seurat::RunPCA(both_samples, npcs=100 , features=feats)
+save(both_samples, file="analysis/analysis1/rda/integration_pca.rda")
+
+```
+
+## Genes of the components {.tabset}
+
+Here, the genes the first two principal components are made of.
+The genes are ranked by their PCA scores.
+
+```{r pca_viz_dim, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE}
+
+
+################
+viz_dim_plot <-#
+################
+	function(sample, first_dim, last_dim, nfeat, reduction, ncol, title,
+			basename) {
+
+		g <-
+			Seurat::VizDimLoadings(
+										  sample,
+										  dims=first_dim:last_dim,
+										  nfeatures=nfeat,
+										  reduction=reduction,
+										  ncol=ncol
+										  )
+		g <- g + ggtitle(title)
+		g <- g + theme(plot.title=element_text(hjust=.5))
+
+		ggplot2::ggsave(paste0(basename, ".pdf"), g)
+		ggplot2::ggsave(paste0(basename, ".png"), g)
+
+		return(g)
+	}
+
+# output directory
+dir.create("analysis/analysis1/plots", recursive=T, showWarnings=F)
+
+# MCK332A1
+obj <- load("analysis/analysis1/rda/MCK332A1_pca.rda")
+sample1 <- get(obj)
+g_viz_1 <-
+	viz_dim_plot(
+		sample=sample1,
+		first_dim=1,
+		last_dim=2,
+		nfeat=30,
+		reduction="pca",
+		ncol=2,
+		title="MCK332A1",
+		basename="analysis/analysis1/plots/MCK332A1_pca_viz_dim"
+		)
+
+# MCK332A2
+obj <- load("analysis/analysis1/rda/MCK332A2_pca.rda")
+sample2 <- get(obj)
+g_viz_2 <-
+	viz_dim_plot(
+		sample=sample2,
+		first_dim=1,
+		last_dim=2,
+		nfeat=30,
+		reduction="pca",
+		ncol=2,
+		title="MCK332A2",
+		basename="analysis/analysis1/plots/MCK332A2_pca_viz_dim"
+		)
+
+# integration
+obj <- load("analysis/analysis1/rda/integration_pca.rda")
+both_samples <- get(obj)
+g_viz_I <-
+	viz_dim_plot(
+		sample=both_samples,
+		first_dim=1,
+		last_dim=2,
+		nfeat=30,
+		reduction="pca",
+		ncol=2,
+		title="integration",
+		basename="analysis/analysis1/plots/integration_pca_viz_dim"
+		)
+
+# print plots
+for ( n in c("MCK332A1", "MCK332A2", "integration") ) {
+	cat( paste0("### ", n, " {.tabset}\n\n") )
+	png <- paste0("analysis/analysis1/plots/", n, "_pca_viz_dim.png")
+	cat( paste0('<img src="', png, '">\n\n') )
+}
+
+```
+
+## PCA plots {.tabset}
+
+We can somehow visualize the cellular heterogeneity by plotting the principal components against each others.
+
+```{r pca_dim_plot, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE}
+
+
+## PCA_DIM_PLOT
+
+############
+dim_plot <-#
+############
+	function(
+				sample,
+				reduction,
+				group,
+				colors,
+				lgd_pos,
+				lgd_dir,
+				title,
+				basename
+				) {
+
+		g <-
+			Seurat::DimPlot(
+								 sample,
+								 reduction=reduction,
+								 cols=colors,
+								 group.by=group
+								 )
+		g <- g + ggtitle(title)
+		g <- g + theme(legend.position=lgd_pos, legend.direction=lgd_dir)
+
+		ggplot2::ggsave(paste0(basename, ".pdf"), g)
+		ggplot2::ggsave(paste0(basename, ".png"), g)
+
+		return(g)
+	}
+
+# output directory
+dir.create("analysis/analysis1/plots", recursive=T, showWarnings=F)
+
+# colors
+colors <- read.csv("input/plot/condition_colors.csv")
+colors <- setNames(as.character(colors[,"color"]), colors[,"condition"])
+
+# MCK332A1
+obj <- load("analysis/analysis1/rda/MCK332A1_pca.rda")
+sample1 <- get(obj)
+g_pca_dim_1 <-
+	dim_plot(
+		sample=sample1,
+		reduction="pca",
+		group="condition",
+		colors=colors,
+		lgd_pos="top",
+		lgd_dir="vertical",
+		title="MCK332A1",
+		basename="analysis/analysis1/plots/MCK332A1_pca_dim_grid"
+		)
+
+# MCK332A2
+obj <- load("analysis/analysis1/rda/MCK332A2_pca.rda")
+sample2 <- get(obj)
+g_pca_dim_2 <-
+	dim_plot(
+		sample=sample2,
+		reduction="pca",
+		group="condition",
+		colors=colors,
+		lgd_pos="top",
+		lgd_dir="vertical",
+		title="MCK332A2",
+		basename="analysis/analysis1/plots/MCK332A2_pca_dim_grid"
+		)
+
+# integration
+obj <- load("analysis/analysis1/rda/integration_pca.rda")
+both_samples <- get(obj)
+g_pca_dim_I <-
+	dim_plot(
+		sample=both_samples,
+		reduction="pca",
+		group="condition",
+		colors=colors,
+		lgd_pos="top",
+		lgd_dir="vertical",
+		title="integration",
+		basename="analysis/analysis1/plots/integration_pca_dim_grid"
+		)
+
+# print plots
+for ( n in c("MCK332A1", "MCK332A2", "integration") ) {
+	cat( paste0("### ", n, " {.tabset}\n\n") )
+	png <- paste0("analysis/analysis1/plots/", n, "_pca_dim_grid.png")
+	cat( paste0('<img src="', png, '">\n\n') )
+}
+
+```
+
+## Components heatmaps {.tabset}
+
+Those heatmaps represents, for each component, the cells (columns) and the genes of the component (rows).
+The color represents the PCA score of the gene.
+By this way, we can visualize which genes take the most part to the heterogeneity of the dataset.
+
+```{r pca_heatmap, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE}
+
+
+###############
+dim_heatmap <-#
+###############
+	function(sample, dimension, nfeat, cells, reduction, basename) {
+
+		g <- DimHeatmap(
+							 sample,
+							 dims=dimension,
+							 nfeatures=nfeat,
+							 cells=cells,
+							 reduction=reduction,
+							 fast=F
+							 )
+		g <- g + scale_y_discrete(position="right")
+		g <- g + ggtitle( paste0("PCA_", dimension) )
+		g <- g + theme(
+					   plot.title=element_text(hjust=.5),
+					   legend.position="none"
+					   )
+
+		basename <- paste0(basename, "_", dimension, "_pca_hmap")
+
+		ggplot2::ggsave(paste0(basename, ".pdf"), g)
+		ggplot2::ggsave(paste0(basename, ".png"), g)
+
+		return(g)
+	}
+
+# output directory
+dir.create("analysis/analysis1/plots/pca_heatmaps", recursive=T,
+			  showWarnings=F)
+
+# MCK332A1
+obj <- load("analysis/analysis1/rda/MCK332A1_pca.rda")
+sample1 <- get(obj)
+for (i in 1:15) {
+	g <-
+		dim_heatmap(
+					sample=sample1,
+					dimension=i,
+					nfeat=30,
+					cells=1000,
+					reduction="pca",
+					basename="analysis/analysis1/plots/pca_heatmaps/MCK332A1"
+					)
+}
+
+# MCK332A2
+obj <- load("analysis/analysis1/rda/MCK332A2_pca.rda")
+sample2 <- get(obj)
+for (i in 1:15) {
+	g <-
+		dim_heatmap(
+					sample=sample2,
+					dimension=i,
+					nfeat=30,
+					cells=1000,
+					reduction="pca",
+					basename="analysis/analysis1/plots/pca_heatmaps/MCK332A2"
+					)
+}
+
+# integration
+obj <- load("analysis/analysis1/rda/integration_pca.rda")
+both_samples <- get(obj)
+for (i in 1:15) {
+
+	basename <- "analysis/analysis1/plots/pca_heatmaps/integration"
+
+	g <-
+		dim_heatmap(
+					sample=both_samples,
+					dimension=i,
+					nfeat=30,
+					cells=1000,
+					reduction="pca",
+					basename=basename
+					)
+}
+
+# print plots
+for ( n in c("MCK332A1", "MCK332A2", "integration") ) {
+
+	# sample
+	cat( paste0("### ", n, " {.tabset}\n\n") )
+
+	# pca dimensions
+	for (i in 1:15) {
+
+		# tab
+		cat( paste0("#### ", i, " {.tabset}\n\n") )
+
+		# image
+		png <- paste0(
+						  '<img src="analysis/analysis1/plots/pca_heatmaps/',
+						  n,
+						  '_',
+						  i,
+						  '_pca_hmap.png">'
+						  )
+		cat(paste0(png, '\n\n'))
+	}
+}
+
+```
+
+
+
+
+# Cell cycle {.tabset}
+
+Using a set of known cell cycle markers, we score what period of the cell cycle a given cell is in.
+We can then visualise whether cell's are clustering by cell cycle.
+It might be unwise to regress out the effect in our case.
+
+```{r cell_cycle, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE}
+
+
+## CELL_CYCLE
+
+##############
+cell_cycle <-#
+##############
+	function(sample, npcs, reduction, first_dim, last_dim, title, basename) {
+
+		# convert cell cycle genes to mouse notation
+		s.genes <- Hmisc::capitalize(tolower(cc.genes$s.genes))
+		g2m.genes <- Hmisc::capitalize(tolower(cc.genes$g2m.genes))
+
+		sample <- Seurat::CellCycleScoring(
+													  sample,
+													  s.features=s.genes,
+													  g2m.features=g2m.genes,
+													  set.ident=T
+													  )
+
+		pca <- Seurat::RunPCA(sample, features=c(s.genes, g2m.genes), npcs=npcs)
+
+		g <- Seurat::DimPlot(pca) + ggtitle(title)
+
+		ggplot2::ggsave( g , file=paste0(basename, "_pca.pdf") )
+		ggplot2::ggsave( g , file=paste0(basename, "_pca.png") )
+
+		if ( reduction == "tsne") {
+
+			sample <- Seurat::RunTSNE(sample, dims=first_dim:last_dim)
+
+		} else if ( reduction == "umap" ) {
+
+			sample <- Seurat::RunUMAP(sample, dims=first_dim:last_dim)
+
+		} else {
+
+			sample <- Seurat::RunUMAP(sample, dims=first_dim:last_dim)
+		}
+
+		g <- Seurat::DimPlot(sample, reduction=reduction) + ggtitle(title)
+
+		ggplot2::ggsave( g , file=paste0(basename, "_reduc.pdf") )
+		ggplot2::ggsave( g , file=paste0(basename, "_reduc.png") )
+
+		return(sample)
+	}
+
+# output directory
+dir.create("analysis/analysis1/plots", recursive=T, showWarnings=F)
+
+# MCK332A1
+obj <- load("analysis/analysis1/rda/MCK332A1_pca.rda")
+sample1 <- get(obj)
+sample1 <-
+	cell_cycle(
+		sample=sample1,
+		npcs=100,
+		reduction="umap",
+		first_dim=1,
+		last_dim=40,
+		title="MCK332A1",
+		basename="analysis/analysis1/plots/MCK332A1_cell_cycle"
+		)
+save(sample1, file="analysis/analysis1/rda/MCK332A1_cell_cycle.rda")
+
+# MCK332A2
+obj <- load("analysis/analysis1/rda/MCK332A2_pca.rda")
+sample2 <- get(obj)
+sample2 <-
+	cell_cycle(
+		sample=sample2,
+		npcs=100,
+		reduction="umap",
+		first_dim=1,
+		#last_dim=37,
+		last_dim=40,
+		title="MCK332A2",
+		basename="analysis/analysis1/plots/MCK332A2_cell_cycle"
+		)
+save(sample2, file="analysis/analysis1/rda/MCK332A2_cell_cycle.rda")
+
+# integration
+obj <- load("analysis/analysis1/rda/integration_pca.rda")
+both_samples <- get(obj)
+both_samples <-
+	cell_cycle(
+		sample=both_samples,
+		npcs=100,
+		reduction="umap",
+		first_dim=1,
+		#last_dim=40,
+		last_dim=40,
+		title="integration",
+		basename="analysis/analysis1/plots/integration_cell_cycle"
+		)
+save(both_samples, file="analysis/analysis1/rda/integration_cell_cycle.rda")
+
+# print umap plots
+cat("### UMAP plots {.tabset}\n\n")
+for ( n in c("MCK332A1", "MCK332A2", "integration") ) {
+	cat(paste0("#### ", n, " {.tabset}\n\n"))
+	png <- paste0("analysis/analysis1/plots/", n, "_cell_cycle_reduc.png")
+	cat(paste0('<img src="', png, '">\n\n'))
+}
+
+# print pca plots
+cat("### PCA plots {.tabset}\n\n")
+for ( n in c("MCK332A1", "MCK332A2", "integration") ) {
+	cat(paste0("#### ", n, " {.tabset}\n\n"))
+	png <- paste0("analysis/analysis1/plots/", n, "_cell_cycle_pca.png")
+	cat(paste0('<img src="', png, '">\n\n'))
+}
+
+```
+
+
+
+
+# Dataset's dimensionality
+
+### Jask straw plots {.tabset}
+
+JackStraw plot. A QQ-plot comparing the distribution of p-values for all genes across each PC, compared with a uniform distribution.
+Also determines a p-value for the overall significance of each PC.
+
+For further analysis, we are selecting the last significant (p-value<0.05) after reaching the uniform distribution.
+
+
+```{r jackstraw, echo=TRUE, include=TRUE, results='hide', message=FALSE, warning=FALSE, cache=TRUE, strip.white=TRUE}
+
+
+# parallelization
+BiocParallel::register(MulticoreParam(24))
+base::options(future.globals.maxSize = 1000 * 1024^2 )
+future::plan("multiprocess", workers=24)
+
+# output directory
+dir.create("analysis/analysis1/rda", recursive=T, showWarnings=F)
+
+#sample MCK332A1
+obj <- load("analysis/analysis1/rda/MCK332A1_pca.rda")
+sample1 <- get(obj)
+sample1 <- Seurat::JackStraw(sample1, num.replicate=100, dims=100)
+sample1 <- Seurat::ScoreJackStraw(sample1, dims=1:100)
+save(sample1, file="analysis/analysis1/rda/MCK332A1_jackstraw.rda")
+
+# MCK332A2
+obj <- load("analysis/analysis1/rda/MCK332A2_pca.rda")
+sample2 <- get(obj)
+sample2 <- Seurat::JackStraw(sample2, num.replicate=100, dims=100)
+sample2 <- Seurat::ScoreJackStraw(sample2, dims=1:100)
+save(sample2, file="analysis/analysis1/rda/MCK332A2_jackstraw.rda")
+
+# integration
+obj <- load("analysis/analysis1/rda/integration_pca.rda")
+both_samples <- get(obj)
+both_samples <- Seurat::JackStraw(both_samples, num.replicate=100, dims=100)
+both_samples <- Seurat::ScoreJackStraw(both_samples, dims=1:100)
+save(both_samples, file="analysis/analysis1/rda/integration_jackstraw.rda")
+
+```
+
+```{r jackstraw_plot, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE}
+
+
+###################
+jack_straw_plot <-#
+###################
+	function(sample, reduction, first_dim, last_dim, title, basename) {
+
+		g <-
+			Seurat::JackStrawPlot(
+										 sample,
+										 reduction=reduction,
+										 dims=first_dim:last_dim
+										 )
+		g <- g + ggtitle(title)
+		g <- g + theme(
+							legend.text=element_text(size=8),
+							legend.title=element_text(size=10),
+							legend.position="top"
+							)
+
+		ggplot2::ggsave(paste0(basename, ".pdf"), g)
+		ggplot2::ggsave(paste0(basename, ".png"), g)
+
+		return(g)
+	}
+
+# output directory
+dir.create("analysis/analysis1/plots", recursive=T, showWarnings=F)
+
+# MCK332A1
+obj <- load("analysis/analysis1/rda/MCK332A1_jackstraw.rda")
+sample1 <- get(obj)
+g_jstraw_1 <-
+	jack_straw_plot(
+		sample=sample1,
+		first_dim=10,
+		last_dim=40,
+		reduction="pca",
+		title="MCK332A1",
+		basename="analysis/analysis1/plots/MCK332A1_jstraw_plot"
+		)
+
+# MCK332A2
+obj <- load("analysis/analysis1/rda/MCK332A2_jackstraw.rda")
+sample2 <- get(obj)
+g_jstraw_2 <-
+	jack_straw_plot(
+		sample=sample2,
+		first_dim=10,
+		last_dim=40,
+		reduction="pca",
+		title="MCK332A2",
+		basename="analysis/analysis1/plots/MCK332A2_jstraw_plot"
+		)
+
+# integration
+obj <- load("analysis/analysis1/rda/integration_jackstraw.rda")
+both_samples <- get(obj)
+g_jstraw_I <-
+	jack_straw_plot(
+		sample=both_samples,
+		first_dim=10,
+		last_dim=40,
+		reduction="pca",
+		title="integration",
+		basename="analysis/analysis1/plots/integration_jstraw_plot"
+		)
+
+# print plots
+for ( n in c("MCK332A1", "MCK332A2", "integration") ) {
+	cat(paste0("#### ", n, " {.tabset}\n\n"))
+	png <- paste0("analysis/analysis1/plots/", n, "_jstraw_plot.png")
+	cat(paste0('<img src="', png, '">\n\n'))
+}
+
+```
+
+### Elbow plots {.tabset}
+
+Elbow plot. A plot of the standard deviations of the principle components.
+The "elbow" of the plot should indicate where to draw a threshold for selecting interestering PCs for further analysis.
+
+```{r elbow_plot, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE}
+
+
+##############
+elbow_plot <-#
+##############
+	function(sample, reduction, ndims, title, basename) {
+
+		g <- Seurat::ElbowPlot(sample, reduction=reduction, ndims=ndims)
+		g <- g + ggtitle(title)
+
+		ggplot2::ggsave(paste0(basename, ".pdf"), g)
+		ggplot2::ggsave(paste0(basename, ".png"), g)
+
+		return(g)
+	}
+
+# output directory
+dir.create("analysis/analysis1/plots", recursive=T, showWarnings=F)
+
+# MCK332A1
+obj <- load("analysis/analysis1/rda/MCK332A1_jackstraw.rda")
+sample1 <- get(obj)
+g_elbow_1 <-
+	elbow_plot(
+		sample=sample1,
+		reduction="pca",
+		ndims=70,
+		title="MCK332A1",
+		basename="analysis/analysis1/plots/MCK332A1_elbow_plot"
+		)
+
+# MCK332A2
+obj <- load("analysis/analysis1/rda/MCK332A2_jackstraw.rda")
+sample2 <- get(obj)
+g_elbow_2 <-
+	elbow_plot(
+		sample=sample2,
+		reduction="pca",
+		ndims=70,
+		title="MCK332A2",
+		basename="analysis/analysis1/plots/MCK332A2_elbow_plot"
+		)
+
+# integration
+obj <- load("analysis/analysis1/rda/integration_jackstraw.rda")
+both_samples <- get(obj)
+g_elbow_I <-
+	elbow_plot(
+		sample=both_samples,
+		reduction="pca",
+		ndims=70,
+		title="integration",
+		basename="analysis/analysis1/plots/integration_elbow_plot"
+		)
+
+# print plots
+for ( n in c("MCK332A1", "MCK332A2", "integration") ) {
+	cat(paste0("#### ", n, " {.tabset}\n\n"))
+	png <- paste0("analysis/analysis1/plots/", n, "_elbow_plot.png")
+	cat(paste0('<img src="', png, '">\n\n'))
+}
+
+```
+
+
+
+
+# Clustering
+
+Seurat use a graph-based clustering approach.
+A cell distance metric is derived from the previously identified principal components.
+The cellular distance matrix is then partitioned into clusters.
+Briefly, cells are embedded into in a graph structure - for example a K-nearest neighbor (KNN) graph, with edges drawn between cells with similar gene expression patterns, and then attempt to partition this graph into highly interconnected ‘quasi-cliques’ or ‘communities’.
+
+First construct a KNN graph based on the euclidean distance in PCA space and refine the edge weights between any two cells based on the shared overlap in their local neighborhoods (Jaccard similarity).
+
+```{r clustering, echo=TRUE, include=TRUE, results='hide', message=FALSE, warning=FALSE, cache=TRUE, strip.white=TRUE}
+
+
+# parallelization
+BiocParallel::register(MulticoreParam(24))
+base::options(future.globals.maxSize = 1000 * 1024^2 )
+future::plan("multiprocess", workers=24)
+
+# output directory
+dir.create("analysis/analysis1/rda", recursive=T, showWarnings=F)
+
+# MCK332A1
+obj <- load("analysis/analysis1/rda/MCK332A1_jackstraw.rda")
+sample1 <- get(obj)
+#sample1 <- Seurat::FindNeighbors(sample1, dims=1:39)
+##sample1 <- Seurat::FindNeighbors(sample1, dims=1:39)
+sample1 <- Seurat::FindNeighbors(sample1, dims=1:40)
+#sample1 <- Seurat::FindClusters(sample1, resolution=1.18)
+sample1 <- Seurat::FindClusters(sample1, resolution=1.18)
+save(sample1, file="analysis/analysis1/rda/MCK332A1_clustered.rda")
+
+# MCK332A2
+obj <- load("analysis/analysis1/rda/MCK332A2_jackstraw.rda")
+sample2 <- get(obj)
+##sample2 <- Seurat::FindNeighbors(sample2, dims=1:37)
+#sample2 <- Seurat::FindNeighbors(sample2, dims=1:39)
+sample2 <- Seurat::FindNeighbors(sample2, dims=1:40)
+#sample2 <- Seurat::FindClusters(sample2, resolution=1.18)
+sample2 <- Seurat::FindClusters(sample2, resolution=1.18)
+save(sample2, file="analysis/analysis1/rda/MCK332A2_clustered.rda")
+
+# integration
+obj <- load("analysis/analysis1/rda/integration_jackstraw.rda")
+both_samples <- get(obj)
+##both_samples <- Seurat::FindNeighbors(both_samples, dims=1:40)
+#both_samples <- Seurat::FindNeighbors(both_samples, dims=1:43)
+##both_samples <- Seurat::FindNeighbors(both_samples, dims=1:55)
+both_samples <- Seurat::FindNeighbors(both_samples, dims=1:40)
+#both_samples <- Seurat::FindClusters(both_samples, resolution=1.18)
+both_samples <- Seurat::FindClusters(both_samples, resolution=1.18)
+save(both_samples, file="analysis/analysis1/rda/integration_clustered.rda")
+
+```
+
+
+
+
+# Dimension reduction
+
+We are using non linear dimension reduction methods in order to capture more complex data structures than PCA does.
+
+```{r tsne, echo=TRUE, include=TRUE, results='hide', message=FALSE, warning=FALSE, cache=TRUE, strip.white=TRUE}
+
+
+# output directory
+dir.create("analysis/analysis1/rda", recursive=T, showWarnings=F)
+
+# MCK332A1
+obj <- load("analysis/analysis1/rda/MCK332A1_clustered.rda")
+sample1 <- get(obj)
+#sample1 <- Seurat::RunTSNE(sample1 , dims=1:39)
+##sample1 <- Seurat::RunTSNE(sample1 , dims=1:39)
+sample1 <- Seurat::RunTSNE(sample1 , dims=1:40)
+save(sample1, file="analysis/analysis1/rda/MCK332A1_tsne.rda")
+
+# MCK332A2
+obj <- load("analysis/analysis1/rda/MCK332A2_clustered.rda")
+sample2 <- get(obj)
+##sample2 <- Seurat::RunTSNE(sample2 , dims=1:37)
+#sample2 <- Seurat::RunTSNE(sample2 , dims=1:39)
+sample2 <- Seurat::RunTSNE(sample2 , dims=1:40)
+save(sample2, file="analysis/analysis1/rda/MCK332A2_tsne.rda")
+
+# integration
+obj <- load("analysis/analysis1/rda/integration_clustered.rda")
+both_samples <- get(obj)
+##both_samples <- Seurat::RunTSNE(both_samples , dims=1:40)
+#both_samples <- Seurat::RunTSNE(both_samples , dims=1:43)
+##both_samples <- Seurat::RunTSNE(both_samples , dims=1:55)
+both_samples <- Seurat::RunTSNE(both_samples , dims=1:40)
+save(both_samples, file="analysis/analysis1/rda/integration_tsne.rda")
+
+```
+
+```{r umap, echo=TRUE, include=TRUE, results='hide', message=FALSE, warning=FALSE, cache=TRUE, strip.white=TRUE}
+
+
+# output directory
+dir.create("analysis/analysis1/rda", recursive=T, showWarnings=F)
+
+# MCK332A1
+obj <- load("analysis/analysis1/rda/MCK332A1_tsne.rda")
+#obj <- load("analysis/analysis1/rda/MCK332A1_clustered.rda")
+sample1 <- get(obj)
+#sample1 <- Seurat::RunUMAP(sample1 , dims=1:39)
+#sample1 <- Seurat::RunUMAP(sample1 , dims=1:39)
+sample1 <- Seurat::RunUMAP(sample1 , dims=1:40)
+save(sample1, file="analysis/analysis1/rda/MCK332A1_umap.rda")
+
+# MCK332A2
+obj <- load("analysis/analysis1/rda/MCK332A2_tsne.rda")
+#obj <- load("analysis/analysis1/rda/MCK332A2_clustered.rda")
+sample2 <- get(obj)
+##sample2 <- Seurat::RunUMAP(sample2 , dims=1:37)
+#sample2 <- Seurat::RunUMAP(sample2 , dims=1:39)
+sample2 <- Seurat::RunUMAP(sample2 , dims=1:40)
+save(sample2, file="analysis/analysis1/rda/MCK332A2_umap.rda")
+
+# integration
+obj <- load("analysis/analysis1/rda/integration_tsne.rda")
+#obj <- load("analysis/analysis1/rda/integration_clustered.rda")
+both_samples <- get(obj)
+##both_samples <- Seurat::RunUMAP(both_samples , dims=1:40)
+#both_samples <- Seurat::RunUMAP(both_samples , dims=1:43)
+##both_samples <- Seurat::RunUMAP(both_samples , dims=1:55)
+both_samples <- Seurat::RunUMAP(both_samples , dims=1:40)
+save(both_samples, file="analysis/analysis1/rda/integration_umap.rda")
+
+```
+
+## tSNE plots {.tabset}
+
+tSNE aims to place cells with similar local neighborhoods in high-dimensional space together in low-dimensional space.
+It’s inherently good at representing local relationships but poor at representing global relationships, so be careful when interpreting the results.
+
+ 
+```{r tsne_plot, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE}
+
+
+############
+dim_plot <-#
+############
+	function(sample, reduction, lgd_pos, lgd_dir, title, basename) {
+
+		g <- Seurat::DimPlot(sample, reduction=reduction)
+		g <- g + ggtitle(title)
+		g <- g + theme(legend.position=lgd_pos, legend.direction=lgd_dir)
+
+		ggplot2::ggsave(paste0(basename, ".pdf"), g)
+		ggplot2::ggsave(paste0(basename, ".png"), g)
+
+		return(g)
+	}
+
+# output directory
+dir.create("analysis/analysis1/plots", recursive=T, showWarnings=F)
+
+# MCK332A1
+obj <- load("analysis/analysis1/rda/MCK332A1_umap.rda")
+sample1 <- get(obj)
+g_tsne_1 <-
+	dim_plot(
+		sample=sample1,
+		reduction="tsne",
+		lgd_pos="right",
+		lgd_dir="vertical",
+		title="MCK332A1",
+		basename="analysis/analysis1/plots/MCK332A1_tsne_dim"
+		)
+
+# MCK332A2
+obj <- load("analysis/analysis1/rda/MCK332A2_umap.rda")
+sample2 <- get(obj)
+g_tsne_2 <-
+	dim_plot(
+		sample=sample2,
+		reduction="tsne",
+		lgd_pos="right",
+		lgd_dir="vertical",
+		title="MCK332A2",
+		basename="analysis/analysis1/plots/MCK332A2_tsne_dim"
+		)
+
+# integration
+obj <- load("analysis/analysis1/rda/integration_umap.rda")
+both_samples <- get(obj)
+g_tsne_I <-
+	dim_plot(
+		sample=both_samples,
+		reduction="tsne",
+		lgd_pos="right",
+		lgd_dir="vertical",
+		title="integration",
+		basename="analysis/analysis1/plots/integration_tsne_dim"
+		)
+
+# print plots
+for ( n in c("MCK332A1", "MCK332A2", "integration") ) {
+	cat(paste0("### ", n, " {.tabset}\n\n"))
+	cat(paste0('<img src="analysis/analysis1/plots/', n, '_tsne_dim.png">\n\n'))
+}
+
+```
+
+## Uniform Manifold Approximation and Projection
+
+UMAP is similar to tSNE but is faster and able to preserve more of the global data structure.
+
+### Clusters {.tabset}
+
+```{r umap_plot, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE}
+
+
+############
+dim_plot <-#
+############
+	function(sample, reduction, lgd_pos, lgd_dir, title, basename) {
+
+		g <- Seurat::DimPlot(sample, reduction=reduction)
+		g <- g + ggtitle(title)
+		g <- g + theme(legend.position=lgd_pos, legend.direction=lgd_dir)
+
+		ggplot2::ggsave(paste0(basename, ".pdf"), g)
+		ggplot2::ggsave(paste0(basename, ".png"), g)
+
+		return(g)
+	}
+
+# output directory
+dir.create("analysis/analysis1/plots", recursive=T, showWarnings=F)
+
+# MCK332A1
+obj <- load("analysis/analysis1/rda/MCK332A1_umap.rda")
+sample1 <- get(obj)
+g_umap_1 <-
+		dim_plot(
+		sample=sample1,
+		reduction="umap",
+		lgd_pos="right",
+		lgd_dir="vertical",
+		title="MCK332A1",
+		basename="analysis/analysis1/plots/MCK332A1_umap_dim"
+		)
+
+# MCK332A2
+obj <- load("analysis/analysis1/rda/MCK332A2_umap.rda")
+sample2 <- get(obj)
+g_umap_2 <-
+		dim_plot(
+		sample=sample2,
+		reduction="umap",
+		lgd_pos="right",
+		lgd_dir="vertical",
+		title="MCK332A2",
+		basename="analysis/analysis1/plots/MCK332A2_umap_dim"
+		)
+
+# integration
+obj <- load("analysis/analysis1/rda/integration_umap.rda")
+both_samples <- get(obj)
+g_umap_I <-
+	dim_plot(
+		sample=both_samples,
+		reduction="umap",
+		lgd_pos="right",
+		lgd_dir="vertical",
+		title="integration",
+		basename="analysis/analysis1/plots/integration_umap_dim"
+		)
+
+# print plots
+for ( n in c("MCK332A1", "MCK332A2", "integration") ) {
+	cat(paste0("#### ", n, " {.tabset}\n\n"))
+	cat(paste0('<img src="analysis/analysis1/plots/', n, '_umap_dim.png">\n\n'))
+}
+
+```
+
+### Treatment {.tabset}
+
+```{r treatment, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE}
+
+
+## TREATMENT
+
+############
+dim_plot <-#
+############
+	function(
+				sample,
+				reduction,
+				group,
+				colors,
+				lgd_pos,
+				lgd_dir,
+				title,
+				basename
+				) {
+
+		g <-
+			Seurat::DimPlot(
+								 sample,
+								 reduction=reduction,
+								 group.by=group,
+								 cols=colors
+								 )
+		g <- g + ggtitle(title)
+		g <- g + theme(legend.position=lgd_pos, legend.direction=lgd_dir)
+
+		ggplot2::ggsave(paste0(basename, ".pdf"), g)
+		ggplot2::ggsave(paste0(basename, ".png"), g)
+
+		return(g)
+	}
+
+# output directory
+dir.create("analysis/analysis1/plots", recursive=T, showWarnings=F)
+
+# colors
+colors <- read.csv("input/plot/condition_colors.csv")
+colors <- setNames(as.character(colors[,"color"]), colors[,"condition"])
+
+# MCK332A1
+obj <- load("analysis/analysis1/rda/MCK332A1_umap.rda")
+sample1 <- get(obj)
+g_cond_umap_1 <-
+	dim_plot(
+		sample=sample1,
+		reduction="umap",
+		group="condition",
+		colors=colors,
+		lgd_pos="right",
+		lgd_dir="vertical",
+		title="MCK332A1",
+		basename="analysis/analysis1/plots/MCK332A1_condition_umap_dim_group"
+		)
+
+# MCK332A2
+obj <- load("analysis/analysis1/rda/MCK332A2_umap.rda")
+sample2 <- get(obj)
+g_cond_umap_2 <-
+	dim_plot(
+		sample=sample2,
+		reduction="umap",
+		group="condition",
+		colors=colors,
+		lgd_pos="right",
+		lgd_dir="vertical",
+		title="MCK332A2",
+		basename="analysis/analysis1/plots/MCK332A2_condition_umap_dim_group"
+		)
+
+# integration
+obj <- load("analysis/analysis1/rda/integration_umap.rda")
+both_samples <- get(obj)
+g_cond_umap_I <-
+	dim_plot(
+		sample=both_samples,
+		reduction="umap",
+		group="condition",
+		colors=colors,
+		lgd_pos="right",
+		lgd_dir="vertical",
+		title="integration",
+		basename="analysis/analysis1/plots/integration_condition_umap_dim_group"
+		)
+
+# print plots
+for ( n in c("MCK332A1", "MCK332A2", "integration") ) {
+	cat(paste0("#### ", n, " {.tabset}\n\n"))
+	cat(
+		paste0(
+			   '<img src="analysis/analysis1/plots/',
+			   n,
+			   '_condition_umap_dim_group.png">',
+			   '\n\n'
+			   )
+		)
+}
+
+```
+
+
+
+
+
+# Marker genes {.tabset}
+
+In order to find marker genes, we use the `FindAllMarkers` Seurat function.
+This compares, one by one, each cluster to every other cells, and test for differential expression.
+
+```{r all_markers, echo=TRUE, include=TRUE, results='hide', message=FALSE, warning=FALSE, cache=TRUE, strip.white=TRUE}
+
+
+# parallelization
+BiocParallel::register(MulticoreParam(24))
+base::options(future.globals.maxSize = 1000 * 1024^2 )
+future::plan("multiprocess", workers=24)
+
+# output directories
+dir.create("analysis/analysis1/rda", recursive=T, showWarnings=F)
+dir.create("analysis/analysis1/spreadsheets", recursive=T, showWarnings=F)
+
+# MCK332A1
+obj <- load("analysis/analysis1/rda/MCK332A1_umap.rda")
+sample1 <- get(obj)
+sample1 <-
+	Seurat::FindAllMarkers(
+		sample1,
+		only.pos=TRUE,
+		min.pct=0.25,
+		logfc.threshold=0.25
+		)
+save( sample1 , file="analysis/analysis1/rda/MCK332A1_allmarkers.rda" )
+csv1 <- "analysis/analysis1/spreadsheets/MCK332A1_allmarkers.csv"
+write.csv( sample1 , file=csv1 , row.names=F )
+
+# MCK332A2
+obj <- load("analysis/analysis1/rda/MCK332A2_umap.rda")
+sample2 <- get(obj)
+sample2 <-
+	Seurat::FindAllMarkers(
+		sample2,
+		only.pos=TRUE,
+		min.pct=0.25,
+		logfc.threshold=0.25
+		)
+save( sample2 , file="analysis/analysis1/rda/MCK332A2_allmarkers.rda" )
+csv2 <- "analysis/analysis1/spreadsheets/MCK332A2_allmarkers.csv"
+write.csv( sample2 , file=csv2 , row.names=F )
+
+# integration
+obj <- load("analysis/analysis1/rda/integration_umap.rda")
+both_samples <- get(obj)
+Seurat::DefaultAssay(both_samples) <- "RNA"
+both_samples <-
+	Seurat::FindAllMarkers(
+		both_samples,
+		only.pos=TRUE,
+		min.pct=0.25,
+		logfc.threshold=0.25
+		)
+save( both_samples , file="analysis/analysis1/rda/integration_allmarkers.rda" )
+csvI <- "analysis/analysis1/spreadsheets/integration_allmarkers.csv"
+write.csv( both_samples , file=csvI , row.names=F )
+
+```
+
+```{r all_markers_plot, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE}
+
+
+############################
+all_markers_feature_plot <-#
+############################
+	function(sample, features, reduction, ncol, title, basename) {
+
+		genes <- rownames(sample@assays[[1]]@counts)
+		are_present <- features %in% genes
+		names(are_present) <- features
+
+		if ( sum(are_present) != length(features) ) {
+
+			not_found <- names( which( are_present == F ) )
+			label <- paste( paste(not_found, collapse=" ") , "not found" )
+			g <- ggplot(data.frame(x=5, y=5), aes(x=x, y=y))
+			g <- g + geom_text(aes(x=5, y=5, label=label))
+
+		} else {
+
+			g <- Seurat::FeaturePlot(
+											 sample,
+											 features=features,
+											 reduction=reduction,
+											 ncol=ncol
+											 )
+
+			# add title
+			if ( ! is.null(title) ) {
+				g <- g + ggtitle(title)
+				g <- g + theme(plot.title=element_text(hjust=.5))
+			}
+
+		}
+
+		# saving
+		ggplot2::ggsave(paste0(basename, ".pdf"), g)
+		ggplot2::ggsave(paste0(basename, ".png"), g)
+
+		return(g)
+	}
+
+# output directories
+dir.create("analysis/analysis1/plots/markers/all_markers", recursive=T, showWarnings=F)
+dir.create("analysis/analysis1/spreadsheets", recursive=T, showWarnings=F)
+
+# MCK332A1
+obj <- load("analysis/analysis1/rda/MCK332A1_umap.rda")
+sample1 <- get(obj)
+
+# MCK332A2
+obj <- load("analysis/analysis1/rda/MCK332A2_umap.rda")
+sample2 <- get(obj)
+
+# integration
+obj <- load("analysis/analysis1/rda/integration_umap.rda")
+both_samples <- get(obj)
+Seurat::DefaultAssay(both_samples) <- "RNA"
+
+# samples
+samples <- c("MCK332A1", "MCK332A2", "integration")
+objects <- c("sample1", "sample2", "both_samples")
+names(objects) <- samples
+
+for ( s in samples ) {
+
+	cat( paste0("## ", s, " {.tabset}\n\n") )
+
+	# load markers
+	csv <- paste0("analysis/analysis1/spreadsheets/", s, "_allmarkers.csv")
+	markers <- read.csv(csv)
+
+	# all the clusters
+	for ( c in sort(unique(markers[,"cluster"])) ) {
+
+		cat( paste0("### ", c, " {.tabset}\n\n") )
+
+		# the top10 genes
+		df <- markers[ markers["cluster"] == c , ]
+		df <- df[ df[,"p_val_adj"] < .05 , ]
+		df <- df[ order(df[,"p_val_adj"]) , ]
+		genes <- df[ 1:min(10, nrow(df)) , "gene" ]
+
+		for ( g in genes ) {
+
+			cat( paste0("#### ", g, " {.tabset}\n\n") )
+
+			basename <-
+				paste0(
+					   "analysis/analysis1/plots/markers/all_markers/",
+					   s, "_cluster_", c, "_", g, "_all_markers_plot"
+					   )
+
+			# plot
+			g <-
+				all_markers_feature_plot(
+										 sample=get(objects[s]),
+										 features=g,
+										 reduction="umap",
+										 ncol=1,
+										 title="",
+										 basename=basename
+										 )
+			# print plot
+			cat( paste0('<img src="', basename, '.png">\n\n') )
+		}
+	}
+}
+
+```
+
+
+
+
+# Duncan's marker genes {.tabset}
+
+These are the potential markers genes provided by Duncan.
+
+```{r duncan_markers, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE}
+
+
+###############################
+duncan_markers_feature_plot <-#
+###############################
+	function(sample, features, reduction, ncol, title, basename) {
+
+		genes <- rownames(sample@assays[[1]]@counts)
+		are_present <- features %in% genes
+		names(are_present) <- features
+
+		if ( sum(are_present) != length(features) ) {
+
+			not_found <- names( which( are_present == F ) )
+			label <- paste( paste(not_found, collapse=" ") , "not found" )
+			g <- ggplot(data.frame(x=5, y=5), aes(x=x, y=y))
+			g <- g + geom_text(aes(x=5, y=5, label=label))
+
+		} else {
+
+			g <- Seurat::FeaturePlot(
+											 sample,
+											 features=features,
+											 reduction=reduction,
+											 ncol=ncol
+											 )
+
+			# add title
+			if ( ! is.null(title) ) {
+				g <- g + ggtitle(title)
+				g <- g + theme(plot.title=element_text(hjust=.5))
+			}
+
+		}
+
+		# saving
+		ggplot2::ggsave(paste0(basename, ".pdf"), g)
+		ggplot2::ggsave(paste0(basename, ".png"), g)
+
+		return(g)
+	}
+
+# output directories
+dir.create("analysis/analysis1/spreadsheets", recursive=T, showWarnings=F)
+dir.create("analysis/analysis1/plots/markers/duncan_markers", recursive=T, showWarnings=F)
+
+# MCK332A1
+obj <- load("analysis/analysis1/rda/MCK332A1_umap.rda")
+sample1 <- get(obj)
+
+# MCK332A2
+obj <- load("analysis/analysis1/rda/MCK332A2_umap.rda")
+sample2 <- get(obj)
+
+# integration
+obj <- load("analysis/analysis1/rda/integration_umap.rda")
+both_samples <- get(obj)
+Seurat::DefaultAssay(both_samples) <- "RNA"
+
+# samples
+samples <- c("MCK332A1", "MCK332A2", "integration")
+objects <- c("sample1", "sample2", "both_samples")
+names(objects) <- samples
+
+csv <-
+	file.path(
+				 "/camp/stp/babs/working/bahn",
+				 "projects",
+				 "haydaya",
+				 "duncan.mckenzie",
+				 "021_scrnaseq_skint1_tcr_detc",
+				 "input/duncan/markers.csv"
+				 )
+markers <- read.csv(csv)
+genes <- by(markers, markers[,"group"], function(d)unique(sort(d[,"gene"])))
+
+for ( s in samples ) {
+
+	cat( paste0("## ", s, " {.tabset}\n\n") )
+
+	# all the groups
+	for ( gp in names(genes) ) {
+
+		cat( paste0("### ", gp, " {.tabset}\n\n") )
+
+		for ( g in genes[[gp]] ) {
+
+			cat( paste0("#### ", g, " {.tabset}\n\n") )
+
+			basename <-
+				paste0(
+					   "analysis/analysis1/plots/markers/duncan_markers/",
+					   s, "_", gp, "_", g, "_duncan_markers_plot"
+					   )
+
+			# plot
+			g <-
+				duncan_markers_feature_plot(
+											sample=get(objects[s]),
+											features=g,
+											reduction="umap",
+											ncol=1,
+											title="",
+											basename=basename
+											)
+			# print plot
+			cat( paste0('<img src="', basename, '.png">\n\n') )
+		}
+	}
+}
+
+```
+
+
+
+
+# Clusters annotation
+
+## Annotation
+
+Here is the clusters annotation made by Duncan.
+
+```{r annotation, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE}
+
+
+## ANNOTATION
+
+######################
+annotated_dim_plot <-#
+######################
+	function(sample, csv, reduction, lgd_pos, lgd_dir, basename) {
+
+		# annotation as a data frame converted to map
+		annot <- read.csv(csv)
+		names <- unique(annot[,c("cluster", "name")])
+		names[,"cluster"] <- gsub("^(\\d+).*", "\\1", names[,"cluster"])
+		names <-
+			by(
+				names, names[,"cluster"],
+				function(x) {
+					return( paste(x[,"name"], collapse="/") )
+				})
+
+		# add annotation
+		sample <- Seurat::RenameIdents(sample, names)
+
+		# the plot
+		g <- Seurat::DimPlot(sample, reduction=reduction, label=T)
+		g <- g + guides(color=guide_legend(ncol=2, override.aes=list(size=4)))
+		g <- g + theme(legend.position=lgd_pos, legend.direction=lgd_dir)
+
+		# saving
+		ggplot2::ggsave(paste0(basename, ".pdf"), g)
+		ggplot2::ggsave(paste0(basename, ".png"), g)
+
+		return(g)
+	}
+
+# output directory
+dir.create("analysis/analysis1/plots", recursive=T, showWarnings=F)
+
+# load
+obj <- load("analysis/analysis1/rda/integration_umap.rda")
+both_samples <- get(obj)
+
+# plot
+csv <- "/camp/stp/babs/working/bahn/projects"
+csv <- file.path(csv, "haydaya/duncan.mckenzie/021_scrnaseq_skint1_tcr_detc")
+csv <- file.path(csv, "input/duncan/cluster_annotation.csv")
+g_annot_I <-
+	annotated_dim_plot(
+		sample=both_samples,
+		csv=csv,
+		reduction="umap",
+		lgd_pos="top",
+		lgd_dir="vertical",
+		basename="analysis/analysis1/plots/integration_annotated_umap_dim"
+		)
+
+# print plot
+png <- "analysis/analysis1/plots/integration_annotated_umap_dim.png"
+cat( paste0('<img src="', png, '">\n\n') )
+
+```
+
+## Marker genes {.tabset}
+
+These are the markers genes Duncan used for his annotation.
+
+```{r annotation_markers_plot, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE}
+
+
+#################################
+clusters_markers_feature_plot <-#
+#################################
+	function(sample, features, reduction, ncol, title, basename) {
+
+		genes <- rownames(sample@assays[[1]]@counts)
+		are_present <- features %in% genes
+		names(are_present) <- features
+
+		if ( sum(are_present) != length(features) ) {
+
+			not_found <- names( which( are_present == F ) )
+			label <- paste( paste(not_found, collapse=" ") , "not found" )
+			g <- ggplot(data.frame(x=5, y=5), aes(x=x, y=y))
+			g <- g + geom_text(aes(x=5, y=5, label=label))
+
+		} else {
+
+			g <- Seurat::FeaturePlot(
+											 sample,
+											 features=features,
+											 reduction=reduction,
+											 ncol=ncol
+											 )
+
+			# add title
+			if ( ! is.null(title) ) {
+				g <- g + ggtitle(title)
+				g <- g + theme(plot.title=element_text(hjust=.5))
+			}
+
+		}
+
+		# saving
+		ggplot2::ggsave(paste0(basename, ".pdf"), g)
+		ggplot2::ggsave(paste0(basename, ".png"), g)
+
+		return(g)
+	}
+
+# output directory
+dir.create("analysis/analysis1/plots/markers/clusters_markers", recursive=T, showWarnings=F)
+
+# the integrated data
+obj <- load("analysis/analysis1/rda/integration_umap.rda")
+both_samples <- get(obj)
+Seurat::DefaultAssay(both_samples) <- "RNA"
+
+# the genes Duncan used
+csv <-
+	file.path(
+			  "/camp/stp/babs/working/bahn",
+			  "projects",
+			  "haydaya",
+			  "duncan.mckenzie",
+			  "021_scrnaseq_skint1_tcr_detc",
+			  "input/duncan/cluster_annotation.csv"
+			  )
+markers <- read.csv(csv)
+markers <- markers[ , c("cluster", "gene") ]
+clusters <- unique(markers[,"cluster"])
+clusters <- clusters[ order(as.numeric( gsub("(\\d+).*", "\\1", clusters) )) ]
+genes <- by(markers, markers[,"cluster"], function(d)sort(unique(d[,"gene"])))
+
+for ( c in clusters ) {
+
+	cat( paste0("### ", c, " {.tabset}\n\n") )
+
+	for ( g in genes[[c]] ) {
+
+		cat( paste0("#### ", g, " {.tabset}\n\n") )
+
+		basename <-
+			paste0(
+				   "analysis/analysis1/plots/markers/clusters_markers/",
+				   c, "_", g, "_clusters_markers_plot"
+				   )
+
+		# plot
+		g <-
+			clusters_markers_feature_plot(
+										  sample=both_samples,
+										  features=g,
+										  reduction="umap",
+										  ncol=1,
+										  title="",
+										  basename=basename
+										)
+		# print plot
+		cat( paste0('<img src="', basename, '.png">\n\n') )
+	}
+}
+
+```
+
+## Clusters marker genes expression
+
+Here are the expressions of the markers by clusters.
+Some of them are not available in the integrated dataset because they are not among the most variable genes: need to see with Duncan!
+
+```{r annotation_markers_expression_plot, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE}
+
+
+## ANNOTATION_MARKERS_EXPRESSION_PLOT
+
+#############
+#dot_plot <-#
+#############
+#	function(sample, csv, genes, lgd_pos, lgd_dir, basename) {
+#
+#		# annotation as a data frame converted to map
+#		annot <- read.csv(csv)
+#		names <- unique(annot[,c("cluster", "name")])
+#		names[,"cluster"] <- gsub("^(\\d+).*", "\\1", names[,"cluster"])
+#		names <-
+#			by(
+#				names, names[,"cluster"],
+#				function(x) {
+#					return( paste(x[,"name"], collapse="/") )
+#				})
+#
+#		# !!!!! some genes are only in RNA so need to see with Duncan !!!!
+#		# the genes to plot
+#		genes <- sort(unique(annot[,"gene"]))
+#		all_genes <- rownames(Seurat::GetAssayData(sample))
+#		genes <- genes[ genes %in% all_genes ]
+#
+#		# add annotation
+#		sample <- Seurat::RenameIdents(sample, names)
+#		names_order <- as.character(sort(unique(annot[,"name"])))
+#		#Seurat::Idents(sample) <- factor(Idents(sample), levels=names_order)
+#
+#		## the plot
+#		g <- Seurat::DotPlot(
+#									sample,
+#									features=genes,
+#									#split.by="condition"
+#									)
+#		g <- g + RotatedAxis()
+#		g <- g + theme(legend.position=lgd_pos, legend.direction=lgd_dir)
+#
+#		# saving
+#		ggplot2::ggsave(paste0(basename, ".pdf"), g)
+#		ggplot2::ggsave(paste0(basename, ".png"), g)
+#	}
+
+# output directory
+dir.create("analysis/analysis1/plots", recursive=T, showWarnings=F)
+
+# load
+obj <- load("analysis/analysis1/rda/integration_umap.rda")
+both_samples <- get(obj)
+Seurat::DefaultAssay(both_samples) <- "RNA"
+
+## plot
+#csv <- "/camp/stp/babs/working/bahn/projects"
+#csv <- file.path(csv, "haydaya/duncan.mckenzie/021_scrnaseq_skint1_tcr_detc")
+#csv <- file.path(csv, "input/duncan/cluster_annotation.csv")
+#dot_plot(
+#	sample=both_samples,
+#	csv=csv,
+#	lgd_pos="top",
+#	lgd_dir="vertical",
+#	basename="analysis/analysis1/plots/integration_dot"
+#	)
+#
+## print plot
+#cat('<img src="analysis/analysis1/plots/integration_dot.png">\n\n')
+
+
+# params
+genes <-
+	c(
+		"Ptprc", "Cd3d", "Cd3e", "Trdc", "Tcrg-V5", "Tcrg-C1", "Trdv4", "Il17a",
+		"5830411N06Rik", "Trac", "Cd8a", "Cd8b1", "Cd4", "Foxp3", "Il10", "Ncr1",
+		"Rora", "Il7r", "Csf3r", "Cd207", "Itgam", "Krt5", "Krt10"
+		)
+populations <- readLines("input/plot/populations.txt")
+
+# cell populations
+annot <- read.csv("input/duncan/cluster_annotation.csv")
+names <- unique(annot[,c("cluster", "name")])
+names[,"cluster"] <- gsub("^(\\d+).*", "\\1", names[,"cluster"])
+names <- by(
+				names,
+				names[,"cluster"],
+				function(x)paste(x[,"name"], collapse="/")
+				)
+both_samples <- Seurat::RenameIdents(both_samples, names)
+Seurat::Idents(both_samples) <-
+	factor(Seurat::Idents(both_samples), levels=rev(populations))
+
+# plot
+g <- Seurat::DotPlot(both_samples, features=rev(genes))
+g <- g + RotatedAxis()
+g <- g + ylab("Cell population") + xlab("Gene")
+t <- theme(
+			  legend.position="top",
+			  legend.direction="vertical",
+			  axis.text.x=element_text(size=9),
+			  axis.text.y=element_text(size=9)
+			  )
+g <- g + t
+basename <- "analysis/analysis1/plots/integration_dot"
+ggplot2::ggsave(paste0(basename, ".pdf"), g)
+ggplot2::ggsave(paste0(basename, ".png"), g)
+
+# print plot
+cat('<img src="analysis/analysis1/plots/integration_dot.png">\n\n')
+
+```
+
+
+
+
+# Keeping only the DETCs
+
+The following of the analysis will focus on the DETCs.
+So the idea is to keep only the DETCs clusters.
+First, we retrieve the barcodes of the DETCs cells.
+
+```{r barcodes, echo=TRUE, include=TRUE, results='hide', message=FALSE, warning=FALSE, cache=TRUE, strip.white=TRUE}
+
+
+# output directory
+d <- "analysis/analysis1/spreadsheets"
+dir.create(d, recursive=T, showWarnings=F)
+
+# load
+obj <- load("analysis/analysis1/rda/integration_clustered.rda")
+integration <- get(obj)
+annot <- read.csv("input/duncan/cluster_annotation.csv")
+annot <- unique( annot[, c("cluster", "name")] )
+
+# the barcodes
+md <- integration@meta.data
+md[,"seurat_clusters"] <- as.character(md[,"seurat_clusters"])
+rows <- match( md[,"seurat_clusters"] , annot[,"cluster"] )
+md[,"seurat_annot"] <- annot[ rows , "name" ]
+md[,"cell_id"] <- gsub("_\\d+$", "", rownames(md))
+rownames(md) <- paste(md[,"sample"], md[,"cell_id"], sep="_")
+write.csv(md, file=file.path(d, "metadata.csv"))
+
+# clusters to keep
+to_keep <- c(0,1,2,3,4,6,7,9,10,11)
+detc <- md[ md[,"seurat_clusters"] %in% as.character(to_keep) , ]
+##detc[,"barcode"] <- gsub("_.*", "", rownames(detc))
+detc[,"barcode"] <- gsub(".*_", "", rownames(detc))
+#detc[,"barcode"] <- rownames(detc)
+detc <- detc[,c("sample", "condition", "seurat_clusters", "barcode")]
+barcodes <- by(detc, detc[,"sample"], function(d)d[,"barcode"])
+
+# save
+write.csv(detc, file=file.path(d, "barcodes.csv"), row.names=F)
+
+```
+
+Now, we subset the original samples so they contain only the DETCs cells.
+
+```{r subset, echo=TRUE, include=TRUE, results='hide', message=FALSE, warning=FALSE, cache=TRUE, strip.white=TRUE}
+
+
+## SUBSET
+
+# output directory
+dir.create("analysis/analysis1/rda", recursive=T, showWarnings=F)
+
+# barcodes map
+md <- read.csv("analysis/analysis1/spreadsheets/barcodes.csv")
+barcodes <- by(md, md[,"sample"], function(d)d[,"barcode"])
+
+############
+# MCK332A1 #
+
+# load sample
+obj <- load("analysis/analysis1/rda/MCK332A1_seurat.rda")
+sample1 <- get(obj)
+
+# subset
+sample <- attr(sample1, "sample")
+sample1@meta.data[,"barcode"] <- rownames(sample1@meta.data)
+bcodes <- barcodes[[sample]]
+subsetted_sample1 <- base::subset(sample1, subset = barcode %in% bcodes)
+
+# save
+save(subsetted_sample1, file="analysis/analysis1/rda/MCK332A1_subset.rda")
+
+############
+# MCK332A2 #
+
+# load sample
+obj <- load("analysis/analysis1/rda/MCK332A2_seurat.rda")
+sample2 <- get(obj)
+
+# subset
+sample <- attr(sample2, "sample")
+sample2@meta.data[,"barcode"] <- rownames(sample2@meta.data)
+bcodes <- barcodes[[sample]]
+subsetted_sample2 <- base::subset(sample2, subset = barcode %in% bcodes)
+
+# save
+save(subsetted_sample2, file="analysis/analysis1/rda/MCK332A2_subset.rda")
+
+```
+
+# Cluster composition {.tabset}
+
+The values in the table are not normalised.
+The values of the barcharts are normalised with the total number of cells for each sample.
+
+```{r composition, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE}
+
+
+## COMPOSITION
+
+# the integration dataset
+obj <- load("analysis/analysis1/rda/integration_umap.rda")
+both_samples <- get(obj)
+
+# cluster annotation
+annot <- read.csv("input/duncan/cluster_annotation.csv")
+regex <- "^Neutrophils$|^Langerhans cells$"
+annot[,"name"] <- gsub(regex, "Neutrophils/Langerhans cells", annot[,"name"])
+annot[,"cluster"] <- as.character(annot[,"cluster"])
+annot[,"cluster"] <- gsub(" \\(.*\\)$", "", annot[,"cluster"])
+
+integration <- both_samples
+regex <- "integrated_snn.res.*"
+column <- "condition"
+factors <- c("IgG control", "anti-Skint1")
+
+# plot params
+colors <- read.csv("input/plot/condition_colors.csv")
+colors <- setNames( as.character(colors[,"color"]) , colors[,"condition"] )
+conditions <- as.character( readLines("input/plot/conditions.txt") )
+populations <- as.character( readLines("input/plot/populations.txt") )
+
+# meta data
+md <- integration@meta.data
+col <- names(md)[ grep(regex, names(md)) ]
+md[,col] <- as.character(md[,col])
+
+# each annotation can contains several clusters
+cluster_nums <-
+	by(annot, annot[,"name"],
+		function(df) {
+			nums <- sort(unique(as.character(df[,"cluster"])))
+		})
+
+# number of cells from each sample in each cluster
+counts <-
+	mapply(
+			 function(n, nums) {
+
+				 cells <- rownames( md[ md[,col] %in% nums, ] )
+
+				 count1 <- sum(grepl("*_1$", cells))
+				 count2 <- sum(grepl("*_2$", cells))
+
+				 df <- data.frame("IgG_control"=count1, "anti-Skint1"=count2)
+				 return(df)
+
+			 }, names(cluster_nums), cluster_nums, SIMPLIFY=F)
+counts <- as.data.frame(do.call(rbind, counts))
+norm_counts <- as.data.frame(apply(counts, 2, function(x)x/sum(x)))
+norm_counts <- as.data.frame( cbind(rownames(norm_counts), norm_counts) )
+names(norm_counts) <- c("Cluster", "IgG_control", "anti-Skint1")
+counts_ <- reshape::melt(norm_counts, id.vars="Cluster")
+names(counts_) <- c("Cluster", "Condition", "Cells")
+counts_[,"Condition"] <- as.character( gsub("_", " ", counts_[,"Condition"]) )
+counts_[,"Condition"] <- factor(counts_[,"Condition"], levels=conditions)
+counts_[,"Cluster"] <- factor(counts_[,"Cluster"], levels=rev(populations))
+
+# plot with everything
+g <- ggplot(counts_, aes_string(x="Cluster", fill="Condition", y="Cells"))
+g <- g + geom_bar(position=position_dodge2(reverse=T), stat="identity")
+g <- g + scale_fill_manual(values=colors)
+g <- g + coord_flip()
+dir.create("analysis/analysis1/plots", recursive=T, showWarnings=F)
+basename1 <- "analysis/analysis1/plots/integration_clusters_composition_1"
+ggplot2::ggsave(paste0(basename1, ".pdf"), g)
+ggplot2::ggsave(paste0(basename1, ".png"), g)
+
+# plot without DETCs
+d <- counts_[ counts_[,"Cluster"] != "DETC" , ]
+g <- ggplot(d, aes_string(x="Cluster", fill="Condition", y="Cells"))
+g <- g + geom_bar(position=position_dodge2(reverse=T), stat="identity")
+g <- g + scale_fill_manual(values=colors)
+g <- g + coord_flip()
+dir.create("analysis/analysis1/plots", recursive=T, showWarnings=F)
+basename2 <- "analysis/analysis1/plots/integration_clusters_composition_2"
+ggplot2::ggsave(paste0(basename2, ".pdf"), g)
+ggplot2::ggsave(paste0(basename2, ".png"), g)
+
+# rmarkdown
+cat("## Table \n\n")
+counts[,"Cluster"] <- rownames(counts)
+counts <- counts[,c("Cluster", "IgG_control", "anti.Skint1")]
+DT::datatable(counts)
+cat("## Barchart \n\n")
+cat( paste0('\n\n<img src="', basename1, '.png">\n\n') )
+cat("## Barchart without DETC\n\n")
+cat( paste0('\n\n<img src="', basename2, '.png">\n\n') )
+
+```
+
+# Number of features {.tabset}
+
+The number of genes detected. Warning: the values are not normalised.
+
+```{r cluster_nfeat, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE}
+
+
+## CLUSTER_NFEAT
+
+# datasets
+obj <- load("analysis/analysis1/rda/MCK332A1_umap.rda")
+sample1 <- get(obj)
+obj <- load("analysis/analysis1/rda/MCK332A2_umap.rda")
+sample2 <- get(obj)
+obj <- load("analysis/analysis1/rda/integration_umap.rda")
+both_samples <- get(obj)
+
+# meta data
+md <- both_samples@meta.data
+col <- names(md)[ grep("integrated_snn.res.*", names(md)) ]
+md[,col] <- as.character(md[,col])
+
+# cluster annotation
+annot <- read.csv("input/duncan/cluster_annotation.csv")
+regex <- "^Neutrophils$|^Langerhans cells$"
+annot[,"name"] <- gsub(regex, "Neutrophils/Langerhans cells", annot[,"name"])
+annot[,"cluster"] <- as.character(annot[,"cluster"])
+annot[,"cluster"] <- gsub(" \\(.*\\)$", "", annot[,"cluster"])
+annot <- unique( annot[,c("cluster", "name")] )
+
+# get cells ids
+nfeats <-
+	by(annot, annot[,"name"],
+		function(x) {
+
+			# cells ids
+			ids <- rownames( md[ md[,col] %in% x[,"cluster"] , ] )
+			cells1 <- ids[ grep("*_1", ids) ]
+			cells1 <- gsub("_1$", "", cells1)
+			cells2 <- ids[ grep("*_2", ids) ]
+			cells2 <- gsub("_2$", "", cells2)
+			cells <- list("sample1"=cells1, "sample2"=cells2)
+
+			# counts 1
+			is_detected_1 <- as.matrix(Seurat::GetAssayData(sample1[,cells1]))
+			is_detected_1 <- rowSums(is_detected_1) > 0
+			detected_1 <- names( which( is_detected_1 == T ) )
+
+			# counts 2
+			is_detected_2 <- as.matrix(Seurat::GetAssayData(sample2[,cells2]))
+			is_detected_2 <- rowSums(is_detected_2) > 0
+			detected_2 <- names( which( is_detected_2 == T ) )
+
+			detected <- union(detected_1, detected_2)
+
+			nfeats <-
+				data.frame(
+							  "Cluster"=x[1,"name"],
+							  "IgG.control"=length(detected_1),
+							  "anti.Skint1"=length(detected_2),
+							  "Integration"=length(detected)
+							  )
+
+			return(nfeats)
+		})
+nfeats <- as.data.frame( do.call(rbind, nfeats) )
+nfeats_ <- melt(nfeats, id.vars="Cluster")
+names(nfeats_) <- c("Cluster", "Sample", "Count")
+nfeats_[,"Sample"] <- gsub("anti\\.Skint1", "anti-Skint1", nfeats_[,"Sample"])
+nfeats_[,"Sample"] <- gsub("IgG\\.control", "IgG control", nfeats_[,"Sample"])
+
+# plot params
+colors <- read.csv("input/plot/condition_colors.csv")
+colors <- setNames( as.character(colors[,"color"]) , colors[,"condition"] )
+colors <- setNames( c(colors, "#B79F00") , c(names(colors), "Integration") )
+conditions <- as.character( readLines("input/plot/conditions.txt") )
+conditions <- c( conditions , "Integration" )
+populations <- as.character( readLines("input/plot/populations.txt") )
+
+# order
+nfeats_[,"Cluster"] <- factor(nfeats_[,"Cluster"], levels=rev(populations))
+nfeats_[,"Sample"] <- factor(nfeats_[,"Sample"], levels=conditions)
+
+# plot
+g <- ggplot(nfeats_, aes_string(x="Cluster", fill="Sample", y="Count"))
+g <- g + geom_bar(position=position_dodge2(reverse=T), stat="identity")
+g <- g + scale_fill_manual(values=colors)
+g <- g + coord_flip()
+dir.create("analysis/analysis1/plots", recursive=T, showWarnings=F)
+basename <- "analysis/analysis1/plots/nfeat_cluster"
+ggplot2::ggsave(paste0(basename, ".pdf"), g)
+ggplot2::ggsave(paste0(basename, ".png"), g)
+
+# rmarkdown
+cat("## Table \n\n")
+DT::datatable(nfeats, rownames=F)
+cat("## Barchart \n\n")
+cat( paste0('\n\n<img src="', basename, '.png">\n\n') )
+
+```
+
+# Session information
+
+```{r}
+sessionInfo()
+```
+

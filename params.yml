@@ -1,0 +1,196 @@
+
+version: 0.32.0
+
+project: SC19070
+
+output_directory: output
+
+genome_version: GRCm38
+genome_release: 86
+
+transcriptome: /camp/svc/reference/Genomics/10x/10x_transcriptomes/refdata-cellranger-mm10-3.0.0
+
+conda: /camp/stp/babs/working/software/anaconda/envs/rnaseq_pipeline
+
+cluster_annotation_file: "/camp/stp/babs/working/bahn/projects/haydaya/duncan.mckenzie/021_scrnaseq_skint1_tcr_detc/input/duncan/cluster_annotation.csv"
+
+###############################################################################
+
+min_cells: 3
+min_features: 200
+
+filtering_mt_min: 0
+filtering_mt_max: 12
+filtering_nfeat_min: 500
+filtering_nfeat_max: 2500
+
+norm_method: "LogNormalize"
+
+#variable_feats_norm_method: "LogNormalize"
+variable_feats_select_method: "vst"
+variable_feats_n: 2000
+variable_feats_n_label: 10
+
+n_princ_comps: 100
+
+jack_straw_n_replicate: 100
+jack_straw_first_dim: 1
+jack_straw_last_dim: 100
+
+clustering_MCK332A1_first_dim: 1
+clustering_MCK332A1_last_dim: 39
+clustering_MCK332A1_resolution: 1.18
+clustering_MCK332A2_first_dim: 1
+clustering_MCK332A2_last_dim: 37
+clustering_MCK332A2_resolution: 1.18
+clustering_integration_first_dim: 1
+clustering_integration_last_dim: 40
+clustering_integration_resolution: 1.18
+
+tsne_MCK332A1_first_dim: 1
+tsne_MCK332A1_last_dim: 39
+tsne_MCK332A2_first_dim: 1
+tsne_MCK332A2_last_dim: 37
+tsne_integration_first_dim: 1
+tsne_integration_last_dim: 40
+
+umap_MCK332A1_first_dim: 1
+umap_MCK332A1_last_dim: 39
+umap_MCK332A2_first_dim: 1
+umap_MCK332A2_last_dim: 37
+umap_integration_first_dim: 1
+umap_integration_last_dim: 40
+
+cloupe_MCK332A1_column_regex: "^seurat_clusters$"
+cloupe_MCK332A2_column_regex: "^seurat_clusters$"
+cloupe_integration_column_regex: "^integrated_snn_res.*"
+
+marker_min_pct: 0.25
+marker_only_pos: "TRUE"
+marker_lfc_thresh: 0.25
+
+pca_viz_dim_reduction: "pca"
+pca_viz_dim_first_dim: 1
+pca_viz_dim_last_dim: 2
+pca_viz_dim_ncol: 2
+pca_viz_dim_nfeat: 30
+
+pca_hmap_grid_nfeat: 30
+pca_hmap_grid_cells: 1000
+pca_hmap_grid_reduction: "pca"
+pca_hmap_grid_first_dim: 1
+pca_hmap_grid_last_dim: 15
+pca_hmap_grid_ncol: 3
+
+pca_hmap_nfeat: 30
+pca_hmap_cells: 1000
+pca_hmap_reduction: "pca"
+pca_hmap_first_dim: 1
+pca_hmap_last_dim: 15
+
+jack_straw_plot_reduction: "pca"
+jack_straw_plot_first_dim: 30
+jack_straw_plot_last_dim: 70
+
+elbow_plot_reduction: "pca"
+elbow_plot_ndims: 70
+
+get_all_markers_column: "p_val_adj"
+get_all_markers_threshold: 0.05
+get_all_markers_n_first: 10
+
+all_markers_plot_type: "umap"
+duncan_markers_plot_type: "umap"
+clusters_markers_plot_type: "umap"
+
+integration_anchors_first_dim: 1
+integration_anchors_last_dim: 20
+integration_anchors_features: 2050
+integration_anchors_k_anchor: 5
+integration_anchors_k_filter: 200
+integration_anchors_k_score: 30
+
+integrate_data_first_dim: 1
+integrate_data_last_dim: 30
+integrate_data_k_weight: 100
+integrate_data_name: "integrated"
+
+integration_clusters:
+   - 0
+   - 1
+   - 2
+   - 4
+   - 6
+   - 7
+
+###############################################################################
+
+markers:
+   alpha:
+      - "Trac"
+      - "Trav13-2"
+      - "Trav13n-4"
+      - "Trav14d-3-dv8"
+      - "Trav15-2-dv6-2"
+      - "Trav16d-dv11"
+      - "Trav16n"
+      - "Trav17"
+      - "Trav21-dv12"
+      - "Trav3-3"
+      - "Trav5-4"
+      - "Trav6-7-dv9"
+   beta:
+      - "Trbc1"
+      - "Trbc2"
+      - "Trbv1"
+      - "Trbv19"
+      - "Trbv2"
+      - "Trbv20"
+      - "Trbv24"
+      - "Trbv26"
+      - "Trbv3"
+      - "Trbv31"
+      - "Trbv4"
+      - "Trbv5"
+   gamma:
+      - "Trgv2"
+      - "Tcrg-C1"
+      - "Tcrg-C2"
+      - "Tcrg-C3"
+      - "Tcrg-C4"
+      - "Tcrg-V1"
+      - "Tcrg-V3"
+      - "Tcrg-V4"
+      - "Tcrg-V5"
+      - "Tcrg-V6"
+      - "Tcrg-V7"
+   delta:
+      - "Trdc"
+      - "Trdv2-2"
+      - "Trdv4"
+   keratin:
+      - "Krt1"
+      - "Krt10"
+      - "Krt14"
+      - "Krt15"
+      - "Krt16"
+      - "Krt17"
+      - "Krt2"
+      - "Krt222"
+      - "Krt23"
+      - "Krt24"
+      - "Krt5"
+      - "Krt6a"
+      - "Krt6b"
+      - "Krt7"
+      - "Krt71"
+      - "Krt77"
+      - "Krt78"
+      - "Krt79"
+      - "Krt80"
+      - "Krt83"
+   immuno:
+      - "Cd3e"
+      - "Il2rg"
+      - "Ptprc"
+

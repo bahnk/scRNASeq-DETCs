@@ -1,0 +1,4336 @@
+---
+title: "SC19070 DETCs"
+output:
+  html_document:
+    df_print: tibble
+    fig_caption: yes
+    toc: true
+    toc_depth: 4
+    toc_float: true
+    code_folding: hide
+---
+
+```{r libraries, echo=TRUE, include=TRUE, results='hide', message=FALSE, warning=FALSE, cache=TRUE, strip.white=TRUE}
+library(BiocParallel)
+library(DT)
+library(Seurat)
+library(clusterProfiler)
+library(dplyr)
+library(future)
+library(ggplot2)
+library(kableExtra)
+library(knitr)
+library(org.Mm.eg.db)
+library(purrr)
+library(readr)
+library(readxl)
+library(reshape)
+```
+
+Following of Duncan's McKenzie experiment focused on the DETCs cluster
+
+# Removing unwanted cells
+
+The droplets can contain doublets or dead cells, so it's necessary to remove them.
+This is done mainly by assessing the distributions of the number of genes (features) per cell.
+
+<span style="color:red">All this part has already been done, as we subsetted cells from the first part of the analysis. We show it just as a control.</span>
+
+## Thresholds for doublets and dead cells
+
+<span style="color:red">This has already been done, as we subsetted cells from the first part of the analysis. We show it just as a control.</span>
+
+It is more convenient to plot the histograms in order to set the thresholds.
+Three thresholds were set:
+
+ * the minimum number of detected genes per cell (removing dead cells or debris)
+ * the maximum number of detected genes per cell (removing doublets)
+ * the maximum percentage mitochondrial genes detected (removing apoptotic cells)
+
+```{r mitochondria, echo=TRUE, include=TRUE, results='hide', message=FALSE, warning=FALSE, cache=TRUE, strip.white=TRUE }
+
+
+## MITOCHONDRIA
+
+# load the subsetted datasets
+subset_1 <-
+	file.path(
+			  "/camp/stp/babs/working/bahn/projects",
+			  "haydaya/duncan.mckenzie/021_scrnaseq_skint1_tcr_detc",
+			  "analysis/analysis1/rda/MCK332A1_subset.rda"
+			  )
+obj <- load(subset_1)
+sample1 <- get(obj)
+subset_2 <-
+	file.path(
+			  "/camp/stp/babs/working/bahn/projects",
+			  "haydaya/duncan.mckenzie/021_scrnaseq_skint1_tcr_detc",
+			  "analysis/analysis1/rda/MCK332A2_subset.rda"
+			  )
+obj <- load(subset_2)
+sample2 <- get(obj)
+
+# the percentage of mitochondrial genes
+sample1[["percent.mt"]] <-
+	Seurat::PercentageFeatureSet(sample1, pattern="^mt-")
+sample2[["percent.mt"]] <-
+	Seurat::PercentageFeatureSet(sample2, pattern="^mt-")
+
+# output directory
+dir.create("analysis/analysis2/rda", recursive=T, showWarnings=F)
+
+# save
+save(sample1, file="analysis/analysis2/rda/MCK332A1_mitochondria.rda")
+save(sample2, file="analysis/analysis2/rda/MCK332A2_mitochondria.rda")
+
+```
+
+### Distributions of the genes {.tabset}
+
+<span style="color:red">This has already been done, as we subsetted cells from the first part of the analysis. We show it just as a control.</span>
+
+Here, the generic term *features* is used instead of *gene* but it is the same thing.
+For each sample, we are plotting 3 metrics:
+
+ * the number of RNA molecules for each cell (`nCount_RNA`)
+ * the number of RNA molecules which align to a gene for each cell (`nFeature_RNA`)
+ * the percentage of RNA molecules which align to a mitochondrial gene (among those which align to a gene) for each cell (`percent.mt`)
+
+```{r violon_plot, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE }
+
+
+## VIOLON_PLOT
+
+###############
+violon_plot <-#
+###############
+	function(sample, features, ncol, point_size, colors, title, basename) {
+
+		g <- Seurat::VlnPlot(
+									sample,
+									features=features,
+									ncol=ncol,
+									cols=colors,
+									pt.size=.3
+									)
+		g <- g + geom_point(size=point_size)
+		g <- g + ggtitle(title)
+		g <- g + theme(plot.title=element_text(hjust=.5))
+
+		ggplot2::ggsave(paste0(basename, ".pdf"), g)
+		ggplot2::ggsave(paste0(basename, ".png"), g)
+
+		return(g)
+	}
+
+# output directory
+dir.create("analysis/analysis2/plots", recursive=T, showWarnings=F)
+
+# colors
+colors <- read.csv("input/plot/condition_colors.csv")
+colors <- setNames(as.character(colors[,"color"]), colors[,"condition"])
+
+# MCK332A1
+obj <- load("analysis/analysis2/rda/MCK332A1_mitochondria.rda")
+sample1 <- get(obj)
+g_vln_1 <-
+	violon_plot(
+				sample=sample1,
+				features=c("nCount_RNA","nFeature_RNA","percent.mt"),
+				ncol=3,
+				point_size=1,
+				colors=colors,
+				title="MCK332A1",
+				basename="analysis/analysis2/plots/MCK332A1_violon_plot"
+				)
+
+# MCK332A2
+obj <- load("analysis/analysis2/rda/MCK332A2_mitochondria.rda")
+sample2 <- get(obj)
+g_vln_2 <-
+	violon_plot(
+				sample=sample2,
+				features=c("nCount_RNA","nFeature_RNA","percent.mt"),
+				ncol=3,
+				point_size=1,
+				colors=colors,
+				title="MCK332A2",
+				basename="analysis/analysis2/plots/MCK332A2_violon_plot"
+				)
+
+# print plots
+cat("#### MCK332A1 {.tabset}\n\n")
+cat('<img src="analysis/analysis2/plots/MCK332A1_violon_plot.png">\n\n')
+cat("#### MCK332A2 {.tabset}\n\n")
+cat('<img src="analysis/analysis2/plots/MCK332A2_violon_plot.png">\n\n')
+
+```
+
+### Number of genes detected {.tabset}
+
+<span style="color:red">This has already been done, as we subsetted cells from the first part of the analysis. We show it just as a control.</span>
+
+The minimum and the maximum number of genes detected were set to **500** and **2500** respectively.
+
+```{r nfeat_threshold_plot, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE }
+
+
+## NFEAT_THRESHOLD_PLOT
+
+###################
+threshold_histo <-#
+###################
+	function(sample, column, min_thr, max_thr, bin_width, title, basename) {
+
+		g <- ggplot(sample@meta.data, aes_string(column))
+		g <- g + geom_histogram(binwidth=bin_width)
+		g <- g + geom_density(aes(y= ..count..), color="blue")
+		g <- g + geom_vline(aes(xintercept=min_thr), color="red")
+		g <- g + geom_vline(aes(xintercept=max_thr), color="red")
+		g <- g + ggtitle(title)
+		g <- g + theme(plot.title=element_text(hjust=.5))
+
+		ggplot2::ggsave(paste0(basename, ".pdf"), g)
+		ggplot2::ggsave(paste0(basename, ".png"), g)
+
+		return(g)
+	}
+
+# MCK332A1
+subset_1 <-
+	file.path(
+			  "/camp/stp/babs/working/bahn/projects",
+			  "haydaya/duncan.mckenzie/021_scrnaseq_skint1_tcr_detc",
+			  "analysis/rda/MCK332A1_subset.rda"
+			  )
+obj <- load(subset_1)
+sample1 <- get(obj)
+g_nfeat_thr_1 <-
+	threshold_histo(
+					sample=sample1,
+					column="nFeature_RNA",
+					min_thr=500,
+					max_thr=2500,
+					bin_width=100,
+					title="MCK332A1",
+					basename="analysis/analysis2/plots/MCK332A1_nfeat_histo"
+					)
+
+# MCK332A2
+subset_2 <-
+	file.path(
+			  "/camp/stp/babs/working/bahn/projects",
+			  "haydaya/duncan.mckenzie/021_scrnaseq_skint1_tcr_detc",
+			  "analysis/rda/MCK332A2_subset.rda"
+			  )
+obj <- load(subset_2)
+sample2 <- get(obj)
+g_nfeat_thr_2 <-
+	threshold_histo(
+					sample=sample2,
+					column="nFeature_RNA",
+					min_thr=500,
+					max_thr=2500,
+					bin_width=100,
+					title="MCK332A2",
+					basename="analysis/analysis2/plots/MCK332A2_nfeat_histo"
+					)
+
+# output directory
+dir.create("analysis/analysis2/plots", recursive=T, showWarnings=F)
+
+# print plots
+cat("#### MCK332A1 {.tabset}\n\n")
+cat('<img src="analysis/analysis2/plots/MCK332A1_nfeat_histo.png">\n\n')
+cat("#### MCK332A2 {.tabset}\n\n")
+cat('<img src="analysis/analysis2/plots/MCK332A2_nfeat_histo.png">\n\n')
+
+```
+
+### Percentage of mitochondrial genes {.tabset}
+
+<span style="color:red">This has already been done, as we subsetted cells from the first part of the analysis. We show it just as a control.</span>
+
+The maximum percentage of mitochondrial genes was set to **12**.
+
+```{r mitoch_threshold_plot, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE }
+
+
+## MITOCH_THRESHOLD_PLOT
+
+###################
+threshold_histo <-#
+###################
+	function(sample, column, min_thr, max_thr, bin_width, title, basename) {
+
+		g <- ggplot(sample@meta.data, aes_string(column))
+		g <- g + geom_histogram(binwidth=bin_width)
+		g <- g + geom_density(aes(y= ..count..), color="blue")
+		g <- g + geom_vline(aes(xintercept=min_thr), color="red")
+		g <- g + geom_vline(aes(xintercept=max_thr), color="red")
+		g <- g + ggtitle(title)
+		g <- g + theme(plot.title=element_text(hjust=.5))
+
+		ggplot2::ggsave(paste0(basename, ".pdf"), g)
+		ggplot2::ggsave(paste0(basename, ".png"), g)
+
+		return(g)
+	}
+
+# MCK332A1
+obj <- load("analysis/analysis2/rda/MCK332A1_mitochondria.rda")
+sample1 <- get(obj)
+g_mitoch_thr_1 <-
+	threshold_histo(
+					sample=sample1,
+					column="percent.mt",
+					min_thr=0,
+					max_thr=12,
+					bin_width=1,
+					title="MCK332A1",
+					basename="analysis/analysis2/plots/MCK332A1_mitoch_histo"
+					)
+
+# MCK332A2
+obj <- load("analysis/analysis2/rda/MCK332A2_mitochondria.rda")
+sample2 <- get(obj)
+g_mitoch_thr_2 <-
+	threshold_histo(
+					sample=sample2,
+					column="percent.mt",
+					min_thr=0,
+					max_thr=12,
+					bin_width=1,
+					title="MCK332A2",
+					basename="analysis/analysis2/plots/MCK332A2_mitoch_histo"
+					)
+
+# output directory
+dir.create("analysis/analysis2/plots", recursive=T, showWarnings=F)
+
+
+# print plots
+cat("#### MCK332A1 {.tabset}\n\n")
+cat('<img src="analysis/analysis2/plots/MCK332A1_mitoch_histo.png">\n\n')
+cat("#### MCK332A2 {.tabset}\n\n")
+cat('<img src="analysis/analysis2/plots/MCK332A2_mitoch_histo.png">\n\n')
+
+```
+
+## Filtering
+
+<span style="color:red">This has already been done, as we subsetted cells from the first part of the analysis. We show it just as a control.</span>
+
+Here, we apply the thresholds previously defined on the datasets.
+
+```{r filtering, echo=TRUE, include=TRUE, results='hide', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE }
+
+
+## FILTERING
+
+# output directory
+dir.create("analysis/analysis2/rda", recursive=T, showWarnings=F)
+
+# MCK332A1
+obj <- load("analysis/analysis2/rda/MCK332A1_mitochondria.rda")
+sample1 <- get(obj)
+sample1 <- base::subset(sample1, subset = nFeature_RNA > 500 )
+sample1 <- base::subset(sample1, subset = nFeature_RNA < 2500 )
+sample1 <- base::subset(sample1, subset = percent.mt < 12 )
+save(sample1, file="analysis/analysis2/rda/MCK332A1_filtered.rda")
+
+# MCK332A2
+obj <- load("analysis/analysis2/rda/MCK332A2_mitochondria.rda")
+sample2 <- get(obj)
+sample2 <- base::subset(sample2, subset = nFeature_RNA > 500 )
+sample2 <- base::subset(sample2, subset = nFeature_RNA < 2500 )
+sample2 <- base::subset(sample2, subset = percent.mt < 12 )
+save(sample2, file="analysis/analysis2/rda/MCK332A2_filtered.rda")
+
+```
+
+## Relationships between metrics
+
+Plotting metrics against each other can allow to detect problems in the data.
+For example, the number of detected genes for each cell is supposed to be correlated to the number of RNA molecules.
+On the contrary, there may be a problem if the number of mitochondrial is correlated to the number of RNA molecules.
+
+### Number of genes detected {.tabset}
+
+On the plot, the correlation coefficient is in brackets.
+
+```{r scatter_nfeat, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE }
+
+
+## SCATTER_NFEAT
+
+###################
+feature_scatter <-#
+###################
+	function(sample, features, xaxis, ncol, title, point_size, colors, basename)
+	{
+
+		# create seurat plots
+		plots <-
+			lapply(features,
+					 function(feat) {
+						 Seurat::FeatureScatter(
+							sample,
+							feature1=xaxis,
+							feature2=feat,
+							pt.size=point_size,
+							cols=colors
+							)
+					 })
+
+		# add title
+		plots <-
+			lapply(plots,
+					 function(plot) {
+						 t <- paste0(title, " (", plot$labels$title, ")")
+						 plot <- plot + ggtitle(t)
+						 return(plot)
+					 })
+
+		# combined plots
+		g <- Seurat::CombinePlots(plots=plots, ncol=ncol)
+
+		# saving
+		ggplot2::ggsave(paste0(basename, ".pdf"), g)
+		ggplot2::ggsave(paste0(basename, ".png"), g)
+
+		return(g)
+	}
+
+# output directory
+dir.create("analysis/analysis2/plots", recursive=T, showWarnings=F)
+
+# colors
+colors <- read.csv("input/plot/condition_colors.csv")
+colors <- setNames(as.character(colors[,"color"]), colors[,"condition"])
+
+# MCK332A1
+subset_1 <-
+	file.path(
+			  "/camp/stp/babs/working/bahn/projects",
+			  "haydaya/duncan.mckenzie/021_scrnaseq_skint1_tcr_detc",
+			  "analysis/analysis1/rda/MCK332A1_subset.rda"
+			  )
+obj <- load(subset_1)
+sample1 <- get(obj)
+basename1 <- "analysis/analysis2/plots/MCK332A1_feature_scatter_nfeat"
+g_nfeat_scatt_1 <-
+	feature_scatter(
+					sample=sample1,
+					features="nFeature_RNA",
+					xaxis="nCount_RNA",
+					ncol=1,
+					title="MCK332A1",
+					point_size=1,
+					colors=colors,
+					basename=basename1
+					)
+
+# MCK332A2
+subset_2 <-
+	file.path(
+			  "/camp/stp/babs/working/bahn/projects",
+			  "haydaya/duncan.mckenzie/021_scrnaseq_skint1_tcr_detc",
+			  "analysis/analysis1/rda/MCK332A2_subset.rda"
+			  )
+obj <- load(subset_2)
+sample2 <- get(obj)
+basename2 <- "analysis/analysis2/plots/MCK332A2_feature_scatter_nfeat"
+g_nfeat_scatt_2 <-
+	feature_scatter(
+					sample=sample2,
+					features="nFeature_RNA",
+					xaxis="nCount_RNA",
+					ncol=1,
+					title="MCK332A2",
+					point_size=1,
+					colors=colors,
+					basename=basename2
+					)
+
+# print plots
+png1 <- "analysis/analysis2/plots/MCK332A1_feature_scatter_nfeat.png"
+png2 <- "analysis/analysis2/plots/MCK332A2_feature_scatter_nfeat.png"
+cat("#### MCK332A1 {.tabset}\n\n")
+cat( paste0('<img src="', png1, '">\n\n') )
+cat("#### MCK332A2 {.tabset}\n\n")
+cat( paste0('<img src="', png2, '">\n\n') )
+
+```
+
+### Percentage of mitochondrial genes {.tabset}
+
+On the plot, the correlation coefficient is in brackets.
+
+```{r scatter_mitoch, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE }
+
+
+## SCATTER_MITOCH
+
+###################
+feature_scatter <-#
+###################
+	function(sample, features, xaxis, ncol, title, point_size, colors, basename)
+	{
+
+		# create seurat plots
+		plots <-
+			lapply(features,
+					 function(feat) {
+						 Seurat::FeatureScatter(
+							sample,
+							feature1=xaxis,
+							feature2=feat,
+							pt.size=point_size,
+							cols=colors
+							)
+					 })
+
+		# add title
+		plots <-
+			lapply(plots,
+					 function(plot) {
+						 t <- paste0(title, " (", plot$labels$title, ")")
+						 plot + ggtitle( paste0(t) )
+					 })
+
+		# combined plots
+		g <- Seurat::CombinePlots(plots=plots, ncol=ncol)
+
+		# saving
+		ggplot2::ggsave(paste0(basename, ".pdf"), g)
+		ggplot2::ggsave(paste0(basename, ".png"), g)
+
+		return(g)
+	}
+
+# output directory
+dir.create("analysis/analysis1/plots", recursive=T, showWarnings=F)
+
+# colors
+colors <- read.csv("input/plot/condition_colors.csv")
+colors <- setNames(as.character(colors[,"color"]), colors[,"condition"])
+
+# MCK332A1
+obj <- load("analysis/analysis2/rda/MCK332A1_mitochondria.rda")
+sample1 <- get(obj)
+basename1 <- "analysis/analysis2/plots/MCK332A1_feature_scatter_mitoch"
+g_mitoch_scatt_1 <-
+	feature_scatter(
+					sample=sample1,
+					features="percent.mt",
+					xaxis="nCount_RNA",
+					ncol=1,
+					title="MCK332A1",
+					point_size=1,
+					colors=colors,
+					basename=basename1
+					)
+
+# MCK332A2
+obj <- load("analysis/analysis2/rda/MCK332A2_mitochondria.rda")
+sample2 <- get(obj)
+basename2 <- "analysis/analysis2/plots/MCK332A2_feature_scatter_mitoch"
+g_mitoch_scatt_2 <-
+	feature_scatter(
+					sample=sample2,
+					features="percent.mt",
+					xaxis="nCount_RNA",
+					ncol=1,
+					title="MCK332A2",
+					point_size=1,
+					colors=colors,
+					basename=basename2
+					)
+
+# print plots
+png1 <- "analysis/analysis2/plots/MCK332A1_feature_scatter_mitoch.png"
+png2 <- "analysis/analysis2/plots/MCK332A2_feature_scatter_mitoch.png"
+cat("#### MCK332A1 {.tabset}\n\n")
+cat( paste0('<img src="', png1, '">\n\n') )
+cat("#### MCK332A2 {.tabset}\n\n")
+cat( paste0('<img src="', png2, '">\n\n') )
+
+```
+
+# Normalization
+
+The counts were normalized using the `NormalizeData` function of Seurat with the `normalization.method` parameter set to ***LogNormalize***.
+This normalises the gene expression measurements for each cell by the total expression, multiplies this by a scale factor (10,000), and log-transforms the result.
+
+```{r normalization, echo=TRUE, include=TRUE, results='hide', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE }
+
+
+## NORMALIZATION
+
+# parallelization
+BiocParallel::register(MulticoreParam(24))
+base::options(future.globals.maxSize = 1000 * 1024^2 )
+future::plan("multiprocess", workers=24)
+
+# output directory
+dir.create("analysis/analysis2/rda", recursive=T, showWarnings=F)
+
+# MCK332A1
+obj <- load("analysis/analysis2/rda/MCK332A1_filtered.rda")
+sample1 <- get(obj)
+sample1 <- Seurat::NormalizeData(sample1, normalization.method="LogNormalize")
+save(sample1, file="analysis/analysis2/rda/MCK332A1_normalized.rda")
+
+# MCK332A2
+obj <- load("analysis/analysis2/rda/MCK332A2_filtered.rda")
+sample2 <- get(obj)
+sample2 <- Seurat::NormalizeData(sample2, normalization.method="LogNormalize")
+save(sample2, file="analysis/analysis2/rda/MCK332A2_normalized.rda")
+
+```
+
+# Selection of the most variable genes {.tabset}
+
+The most variable genes were identified using the `FindVariableFeatures` function of Seurat with the parameters:
+
+ * `selection.method` set to ***vst***
+ * `nfeatures` (the most variable genes) set to ***2000***
+
+```{r variable_features, echo=TRUE, include=TRUE, results='hide', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE }
+
+
+## VARIABLE_FEATURES
+
+# output directory
+dir.create("analysis/analysis2/rda", recursive=T, showWarnings=F)
+
+# MCK332A1
+obj <- load("analysis/analysis2/rda/MCK332A1_normalized.rda")
+sample1 <- get(obj)
+sample1 <-
+	Seurat::FindVariableFeatures(
+		sample1,
+		selection.method="vst",
+		nfeatures=2000
+		)
+save(sample1, file="analysis/analysis2/rda/MCK332A1_varfeats.rda")
+
+# MCK332A2
+obj <- load("analysis/analysis2/rda/MCK332A2_normalized.rda")
+sample2 <- get(obj)
+sample2 <-
+	Seurat::FindVariableFeatures(
+		sample2,
+		selection.method="vst",
+		nfeatures=2000
+		)
+save(sample2, file="analysis/analysis2/rda/MCK332A2_varfeats.rda")
+
+```
+
+```{r variable_features_plot, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE }
+
+
+## VARIABLE_FEATURES_PLOT
+
+#########################
+variable_feature_plot <-#
+#########################
+	function(sample, n_top_variable, title, basename) {
+
+		# the n most variables genes
+		topVar <- head(Seurat::VariableFeatures(sample), n_top_variable)
+
+		# plotting
+		g <- Seurat::VariableFeaturePlot(sample)
+		g <- Seurat::LabelPoints(plot=g, points=topVar, repel=T)
+		g <- g + ggtitle(title)
+		#g <- g + theme(legend.position="top", legend.direction="vertical")
+
+		# saving
+		ggplot2::ggsave(paste0(basename, ".pdf"), g)
+		ggplot2::ggsave(paste0(basename, ".png"), g)
+
+		return(g)
+	}
+
+# output directory
+dir.create("analysis/analysis2/plots", recursive=T, showWarnings=F)
+
+# MCK332A1
+obj <- load("analysis/analysis2/rda/MCK332A1_varfeats.rda")
+sample1 <- get(obj)
+g_varfeats_1 <-
+	variable_feature_plot(
+						  sample=sample1,
+						  n_top_variable=10,
+						  title="MCK332A1",
+						  basename="analysis/analysis2/plots/MCK332A1_variable_feats"
+						  )
+
+# MCK332A2
+obj <- load("analysis/analysis2/rda/MCK332A2_varfeats.rda")
+sample2 <- get(obj)
+g_varfeats_2 <-
+	variable_feature_plot(
+						  sample=sample2,
+						  n_top_variable=10,
+						  title="MCK332A2",
+						  basename="analysis/analysis2/plots/MCK332A2_variable_feats"
+						  )
+
+# print plots
+cat("## MCK332A1 {.tabset}\n\n")
+cat('<img src="analysis/analysis2/plots/MCK332A1_variable_feats.png">\n\n')
+cat("## MCK332A2 {.tabset}\n\n")
+cat('<img src="analysis/analysis2/plots/MCK332A2_variable_feats.png">\n\n')
+
+```
+
+# Integration
+
+```{r anchors, echo=TRUE, include=TRUE, results='hide', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE }
+
+
+## ANCHORS
+
+# parallelization
+BiocParallel::register(MulticoreParam(24))
+base::options(future.globals.maxSize = 1000 * 1024^2 )
+future::plan("multiprocess", workers=24)
+
+############################
+find_integration_anchors <-#
+############################
+	function(
+				paths,
+				first_dim,
+				last_dim,
+				features,
+				k_anchor,
+				k_filter,
+				k_score
+				)
+	{
+
+		# the ordered seurat objects
+		samples <-
+			lapply(
+					 paths,
+					 function(p) {
+						 obj <- load(p)
+						 return( get(obj) )
+					 })
+
+		names(samples) <- unlist(lapply(samples, function(s)attr(s, "sample")))
+		samples <- samples[ sort(names(samples)) ]
+
+		# run seurat
+		anchors <-
+			Seurat::FindIntegrationAnchors(
+													 object.list=samples,
+													 dims=first_dim:last_dim,
+													 anchor.features=features,
+													 k.anchor=k_anchor,
+													 k.filter=k_filter,
+													 k.score=k_score
+													 )
+
+		return(anchors)
+	}
+
+both_samples <-
+	find_integration_anchors(
+		paths=c(
+				"analysis/analysis2/rda/MCK332A1_varfeats.rda",
+				"analysis/analysis2/rda/MCK332A2_varfeats.rda"
+				),
+		first_dim=1,
+		last_dim=20,
+		features=2000,
+		k_anchor=5,
+		k_filter=200,
+		k_score=30
+		)
+
+dir.create("analysis/analysis2/rda", recursive=T, showWarnings=F)
+
+save(both_samples, file="analysis/analysis2/rda/integration_anchors.rda")
+
+```
+
+```{r integration, echo=TRUE, include=TRUE, results='hide', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE }
+
+
+## INTEGRATION
+
+# JUST TO BE SURE !!!
+BiocParallel::register(MulticoreParam(1))
+base::options(future.globals.maxSize = 1000 * 1024^2 )
+future::plan("multiprocess", workers=1)
+
+obj <- load("analysis/analysis2/rda/integration_anchors.rda")
+both_samples <- get(obj)
+
+# run seurat
+both_samples <-
+	Seurat::IntegrateData(
+						  anchorset=both_samples,
+						  new.assay.name="integrated",
+						  dims=1:30,
+						  k.weight=100
+						  )
+
+# just to be sure Seurat will work on the integration in the future
+Seurat::DefaultAssay(both_samples) <- "integrated"
+
+# output directories
+dir.create("analysis/analysis2/rda", recursive=T, showWarnings=F)
+dir.create("analysis/analysis2/spreadsheets", recursive=T, showWarnings=F)
+
+# save object
+save(
+	  both_samples,
+	  file="analysis/analysis2/rda/integration_integrate_data.rda"
+	  )
+
+# save matrix
+write.csv(
+	both_samples@assays[["integrated"]]@data,
+	file="analysis/analysis2/spreadsheets/integration_integrate_data.csv"
+	)
+
+```
+
+# Scaling
+
+Here, the expression of each gene is centered and then reduced by using the `ScaleData` function of Seurat.
+
+```{r scaling, echo=TRUE, include=TRUE, results='hide', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE }
+
+
+## SCALING
+
+# parallelization
+BiocParallel::register(MulticoreParam(24))
+base::options(future.globals.maxSize = 1000 * 1024^2 )
+future::plan("multiprocess", workers=24)
+
+# output directory
+dir.create("analysis/analysis2/rda", recursive=T, showWarnings=F)
+
+# MCK332A1
+obj <- load("analysis/analysis2/rda/MCK332A1_varfeats.rda")
+sample1 <- get(obj)
+all.genes <- rownames(sample1)
+sample1 <- Seurat::ScaleData(sample1, features=all.genes)
+save(sample1, file="analysis/analysis2/rda/MCK332A1_scaled.rda")
+
+# MCK332A2
+obj <- load("analysis/analysis2/rda/MCK332A2_varfeats.rda")
+sample2 <- get(obj)
+all.genes <- rownames(sample2)
+sample2 <- Seurat::ScaleData(sample2, features=all.genes)
+save(sample2, file="analysis/analysis2/rda/MCK332A2_scaled.rda")
+
+# integration
+obj <- load("analysis/analysis2/rda/integration_integrate_data.rda")
+both_samples <- get(obj)
+all.genes <- rownames(both_samples)
+both_samples <- Seurat::ScaleData(both_samples, features=all.genes)
+save(both_samples, file="analysis/analysis2/rda/integration_scaled.rda")
+
+```
+
+# Principal component analysis
+
+PCA analysis of the cell-cycle corrected data using variable genes.
+
+Determine the signficant PCs for further analysis.  
+
+```{r pca, echo=TRUE, include=TRUE, results='hide', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE }
+
+
+## PCA
+
+# output directory
+dir.create("analysis/analysis2/rda", recursive=T, showWarnings=F)
+
+# MCK332A1
+obj <- load("analysis/analysis2/rda/MCK332A1_scaled.rda")
+sample1 <- get(obj)
+feats <- Seurat::VariableFeatures(object=sample1)
+sample1 <- Seurat::RunPCA(sample1, npcs=100 , features=feats)
+save(sample1, file="analysis/analysis2/rda/MCK332A1_pca.rda")
+
+# MCK332A2
+obj <- load("analysis/analysis2/rda/MCK332A2_scaled.rda")
+sample2 <- get(obj)
+feats <- Seurat::VariableFeatures(object=sample2)
+sample2 <- Seurat::RunPCA(sample2, npcs=100 , features=feats)
+save(sample2, file="analysis/analysis2/rda/MCK332A2_pca.rda")
+
+# integration
+obj <- load("analysis/analysis2/rda/integration_scaled.rda")
+both_samples <- get(obj)
+feats <- Seurat::VariableFeatures(object=both_samples)
+both_samples <- Seurat::RunPCA(both_samples, npcs=100 , features=feats)
+save(both_samples, file="analysis/analysis2/rda/integration_pca.rda")
+
+```
+
+## Genes of the components {.tabset}
+
+Here, the genes the first two principal components are made of.
+The genes are ranked by their PCA scores.
+
+```{r pca_viz_dim_plot, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE }
+
+
+## PCA_VIZ_DIM_PLOT
+
+################
+viz_dim_plot <-#
+################
+	function(sample, first_dim, last_dim, nfeat, reduction, ncol, title,
+			basename) {
+
+		g <-
+			Seurat::VizDimLoadings(
+										  sample,
+										  dims=first_dim:last_dim,
+										  nfeatures=nfeat,
+										  reduction=reduction,
+										  ncol=ncol
+										  )
+		g <- g + ggtitle(title)
+		g <- g + theme(plot.title=element_text(hjust=.5))
+
+		ggplot2::ggsave(paste0(basename, ".pdf"), g)
+		ggplot2::ggsave(paste0(basename, ".png"), g)
+
+		return(g)
+	}
+
+# MCK332A1
+obj <- load("analysis/analysis2/rda/MCK332A1_pca.rda")
+sample1 <- get(obj)
+g_viz_1 <-
+	viz_dim_plot(
+				 sample=sample1,
+				 first_dim=1,
+				 last_dim=2,
+				 nfeat=30,
+				 reduction="pca",
+				 ncol=2,
+				 title="MCK332A1",
+				 basename="analysis/analysis2/plots/MCK332A1_pca_viz_dim"
+				 )
+
+# MCK332A2
+obj <- load("analysis/analysis2/rda/MCK332A2_pca.rda")
+sample2 <- get(obj)
+g_viz_2 <-
+	viz_dim_plot(
+				 sample=sample2,
+				 first_dim=1,
+				 last_dim=2,
+				 nfeat=30,
+				 reduction="pca",
+				 ncol=2,
+				 title="MCK332A2",
+				 basename="analysis/analysis2/plots/MCK332A2_pca_viz_dim"
+				 )
+
+# output directory
+dir.create("analysis/analysis2/plots", recursive=T, showWarnings=F)
+
+# integration
+obj <- load("analysis/analysis2/rda/integration_pca.rda")
+both_samples <- get(obj)
+g_viz_I <-
+	viz_dim_plot(
+				 sample=both_samples,
+				 first_dim=1,
+				 last_dim=2,
+				 nfeat=30,
+				 reduction="pca",
+				 ncol=2,
+				 title="integration",
+				 basename="analysis/analysis2/plots/integration_pca_viz_dim"
+				 )
+
+# print plots
+for ( n in c("MCK332A1", "MCK332A2", "integration") ) {
+	cat( paste0("### ", n, " {.tabset}\n\n") )
+	png <- paste0("analysis/analysis2/plots/", n, "_pca_viz_dim.png")
+	cat( paste0('<img src="', png, '">\n\n') )
+}
+
+```
+
+## PCA plots {.tabset}
+
+We can somehow visualize the cellular heterogeneity by plotting the principal components against each others.
+
+```{r pca_dim_plot, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE }
+
+
+## PCA_DIM_PLOT
+
+############
+dim_plot <-#
+############
+	function(
+				sample,
+				reduction,
+				group,
+				colors,
+				lgd_pos,
+				lgd_dir,
+				title,
+				basename
+				) {
+
+		g <-
+			Seurat::DimPlot(
+								 sample,
+								 reduction=reduction,
+								 cols=colors,
+								 group.by=group
+								 )
+		g <- g + ggtitle(title)
+		g <- g + theme(legend.position=lgd_pos, legend.direction=lgd_dir)
+
+		ggplot2::ggsave(paste0(basename, ".pdf"), g)
+		ggplot2::ggsave(paste0(basename, ".png"), g)
+
+		return(g)
+	}
+
+# output directory
+dir.create("analysis/analysis2/plots", recursive=T, showWarnings=F)
+
+# plot params
+colors <- read.csv("input/plot/condition_colors.csv")
+colors <- setNames(as.character(colors[,"color"]), colors[,"condition"])
+conditions <- readLines("input/plot/conditions.txt")
+
+# MCK332A1
+obj <- load("analysis/analysis2/rda/MCK332A1_pca.rda")
+sample1 <- get(obj)
+g_pca_dim_1 <-
+	dim_plot(
+			 sample=sample1,
+			 reduction="pca",
+			 group="condition",
+			 colors=colors,
+			 lgd_pos="top",
+			 lgd_dir="vertical",
+			 title="MCK332A1",
+			 basename="analysis/analysis2/plots/MCK332A1_pca_dim_grid"
+			 )
+
+# MCK332A2
+obj <- load("analysis/analysis2/rda/MCK332A2_pca.rda")
+sample2 <- get(obj)
+g_pca_dim_2 <-
+	dim_plot(
+			 sample=sample2,
+			 reduction="pca",
+			 group="condition",
+			 colors=colors,
+			 lgd_pos="top",
+			 lgd_dir="vertical",
+			 title="MCK332A2",
+			 basename="analysis/analysis2/plots/MCK332A2_pca_dim_grid"
+			 )
+
+# integration
+obj <- load("analysis/analysis2/rda/integration_pca.rda")
+both_samples <- get(obj)
+md <- both_samples@meta.data
+md[,"condition"] <- factor(md[,"condition"], levels=conditions)
+both_samples@meta.data <- md
+g_pca_dim_I <-
+	dim_plot(
+			 sample=both_samples,
+			 reduction="pca",
+			 group="condition",
+			 colors=colors,
+			 lgd_pos="top",
+			 lgd_dir="vertical",
+			 title="integration",
+			 basename="analysis/analysis2/plots/integration_pca_dim_grid"
+			 )
+
+# print plots
+for ( n in c("MCK332A1", "MCK332A2", "integration") ) {
+	cat( paste0("### ", n, " {.tabset}\n\n") )
+	png <- paste0("analysis/analysis2/plots/", n, "_pca_dim_grid.png")
+	cat( paste0('<img src="', png, '">\n\n') )
+}
+
+```
+
+## Components heatmaps {.tabset}
+
+Those heatmaps represents, for each component, the cells (columns) and the genes of the component (rows).
+The color represents the PCA score of the gene.
+By this way, we can visualize which genes take the most part to the heterogeneity of the dataset.
+
+```{r pca_heatmap, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE }
+
+
+## PCA_HEATMAP
+
+###############
+dim_heatmap <-#
+###############
+	function(sample, dimension, nfeat, cells, reduction, basename) {
+
+		g <- Seurat::DimHeatmap(
+										sample,
+										dims=dimension,
+										nfeatures=nfeat,
+										cells=cells,
+										reduction=reduction,
+										fast=F
+										)
+		g <- g + scale_y_discrete(position="right")
+		g <- g + ggtitle( paste0("PCA_", dimension) )
+		g <- g + theme(
+					   plot.title=element_text(hjust=.5),
+					   legend.position="none"
+					   )
+
+		basename <- paste0(basename, "_", dimension, "_pca_hmap")
+
+		ggplot2::ggsave(paste0(basename, ".pdf"), g)
+		ggplot2::ggsave(paste0(basename, ".png"), g)
+
+		return(g)
+	}
+
+# output directory
+dir.create("analysis/analysis2/plots/pca_heatmaps",
+		   recursive=T, showWarnings=F)
+
+# MCK332A1
+obj <- load("analysis/analysis2/rda/MCK332A1_pca.rda")
+sample1 <- get(obj)
+for (i in 1:15) {
+	g <-
+		dim_heatmap(
+					sample=sample1,
+					dimension=i,
+					nfeat=30,
+					cells=1000,
+					reduction="pca",
+					basename="analysis/analysis2/plots/pca_heatmaps/MCK332A1"
+					)
+}
+
+# MCK332A2
+obj <- load("analysis/analysis2/rda/MCK332A2_pca.rda")
+sample2 <- get(obj)
+for (i in 1:15) {
+	g <-
+		dim_heatmap(
+					sample=sample2,
+					dimension=i,
+					nfeat=30,
+					cells=1000,
+					reduction="pca",
+					basename="analysis/analysis2/plots/pca_heatmaps/MCK332A2"
+					)
+}
+
+# integration
+obj <- load("analysis/analysis2/rda/integration_pca.rda")
+both_samples <- get(obj)
+for (i in 1:15) {
+	g <-
+		dim_heatmap(
+					sample=both_samples,
+					dimension=i,
+					nfeat=30,
+					cells=1000,
+					reduction="pca",
+					basename="analysis/analysis2/plots/pca_heatmaps/integration"
+					)
+}
+
+# print plots
+for ( n in c("MCK332A1", "MCK332A2", "integration") ) {
+
+	# sample
+	cat( paste0("### ", n, " {.tabset}\n\n") )
+
+	# pca dimensions
+	for (i in 1:15) {
+
+		# tab
+		cat( paste0("#### ", i, " {.tabset}\n\n") )
+
+		# image
+		png <- paste0(
+						  '<img src="analysis/analysis2/plots/pca_heatmaps/',
+						  n,
+						  '_',
+						  i,
+						  '_pca_hmap.png">'
+						  )
+		cat(paste0(png, '\n\n'))
+	}
+}
+
+```
+
+# Dataset's dimensionality
+
+### Jask straw plots {.tabset}
+
+JackStraw plot. A QQ-plot comparing the distribution of p-values for all genes across each PC, compared with a uniform distribution.
+Also determines a p-value for the overall significance of each PC.
+
+For further analysis, we are selecting the last significant (p-value<0.05) after reaching the uniform distribution.
+
+```{r jackstraw, echo=TRUE, include=TRUE, results='hide', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE }
+
+
+## JACKSTRAW
+
+# parallilization
+BiocParallel::register(MulticoreParam(24))
+base::options(future.globals.maxSize = 1000 * 1024^2 )
+future::plan("multiprocess", workers=24)
+
+# output directory
+dir.create("analysis/analysis2/rda", recursive=T, showWarnings=F)
+
+# MCK332A1
+obj <- load("analysis/analysis2/rda/MCK332A1_pca.rda")
+sample1 <- get(obj)
+sample1 <- Seurat::JackStraw(sample1, num.replicate=100, dims=100)
+sample1 <- Seurat::ScoreJackStraw(sample1, dims=1:100)
+save(sample1, file="analysis/analysis2/rda/MCK332A1_jackstraw.rda")
+
+# MCK332A2
+obj <- load("analysis/analysis2/rda/MCK332A2_pca.rda")
+sample2 <- get(obj)
+sample2 <- Seurat::JackStraw(sample2, num.replicate=100, dims=100)
+sample2 <- Seurat::ScoreJackStraw(sample2, dims=1:100)
+save(sample2, file="analysis/analysis2/rda/MCK332A2_jackstraw.rda")
+
+# integration
+obj <- load("analysis/analysis2/rda/integration_pca.rda")
+both_samples <- get(obj)
+both_samples <- Seurat::JackStraw(both_samples, num.replicate=100, dims=100)
+both_samples <- Seurat::ScoreJackStraw(both_samples, dims=1:100)
+save(both_samples, file="analysis/analysis2/rda/integration_jackstraw.rda")
+
+```
+
+```{r jackstraw_plot, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE }
+
+
+## JACKSTRAW_PLOT
+
+###################
+jack_straw_plot <-#
+###################
+	function(sample, reduction, first_dim, last_dim, title, basename) {
+
+		g <-
+			Seurat::JackStrawPlot(
+										 sample,
+										 reduction=reduction,
+										 dims=first_dim:last_dim
+										 )
+		g <- g + ggtitle(title)
+		g <- g + theme(
+							legend.text=element_text(size=8),
+							legend.title=element_text(size=10),
+							legend.position="top"
+							)
+
+		ggplot2::ggsave(paste0(basename, ".pdf"), g)
+		ggplot2::ggsave(paste0(basename, ".png"), g)
+
+		return(g)
+	}
+
+# output directory
+dir.create("analysis/analysis2/plots", recursive=T, showWarnings=F)
+
+# MCK332A1
+obj <- load("analysis/analysis2/rda/MCK332A1_jackstraw.rda")
+sample1 <- get(obj)
+g_jstraw_1 <-
+	jack_straw_plot(
+					sample=sample1,
+					first_dim=1,
+					last_dim=50,
+					reduction="pca",
+					title="MCK332A1",
+					basename="analysis/analysis2/plots/MCK332A1_jstraw_plot"
+					)
+
+# MCK332A2
+obj <- load("analysis/analysis2/rda/MCK332A2_jackstraw.rda")
+sample2 <- get(obj)
+g_jstraw_2 <-
+	jack_straw_plot(
+					sample=sample2,
+					first_dim=1,
+					last_dim=50,
+					reduction="pca",
+					title="MCK332A2",
+					basename="analysis/analysis2/plots/MCK332A2_jstraw_plot"
+					)
+
+# integration
+obj <- load("analysis/analysis2/rda/integration_jackstraw.rda")
+both_samples <- get(obj)
+g_jstraw_I <-
+	jack_straw_plot(
+					sample=both_samples,
+					first_dim=1,
+					last_dim=50,
+					reduction="pca",
+					title="integration",
+					basename="analysis/analysis2/plots/integration_jstraw_plot"
+					)
+
+# print plots
+for ( n in c("MCK332A1", "MCK332A2", "integration") ) {
+	cat( paste0("#### ", n, " {.tabset}\n\n") )
+	png <- paste0("analysis/analysis2/plots/", n, "_jstraw_plot.png")
+	cat( paste0('<img src="', png, '">\n\n') )
+}
+
+```
+
+### Elbow plots {.tabset}
+
+Elbow plot. A plot of the standard deviations of the principle components.
+The "elbow" of the plot should indicate where to draw a threshold for selecting interestering PCs for further analysis.
+
+```{r elbow_plot, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE }
+
+
+## ELBOW_PLOT
+
+##############
+elbow_plot <-#
+##############
+	function(sample, reduction, ndims, title, basename) {
+
+		g <- Seurat::ElbowPlot(sample, reduction=reduction, ndims=ndims)
+		g <- g + ggtitle(title)
+
+		ggplot2::ggsave(paste0(basename, ".pdf"), g)
+		ggplot2::ggsave(paste0(basename, ".png"), g)
+
+		return(g)
+	}
+
+# output directory
+dir.create("analysis/analysis2/plots", recursive=T, showWarnings=F)
+
+# MCK332A1
+obj <- load("analysis/analysis2/rda/MCK332A1_jackstraw.rda")
+sample1 <- get(obj)
+g_elbow_1 <-
+	elbow_plot(
+			   sample=sample1,
+			   reduction="pca",
+			   ndims=70,
+			   title="MCK332A1",
+			   basename="analysis/analysis2/plots/MCK332A1_elbow_plot"
+			   )
+
+# MCK332A2
+obj <- load("analysis/analysis2/rda/MCK332A2_jackstraw.rda")
+sample2 <- get(obj)
+g_elbow_2 <-
+	elbow_plot(
+			   sample=sample2,
+			   reduction="pca",
+			   ndims=70,
+			   title="MCK332A2",
+			   basename="analysis/analysis2/plots/MCK332A2_elbow_plot"
+			   )
+
+# integration
+obj <- load("analysis/analysis2/rda/integration_jackstraw.rda")
+both_samples <- get(obj)
+g_elbow_I <-
+	elbow_plot(
+			   sample=both_samples,
+			   reduction="pca",
+			   ndims=70,
+			   title="integration",
+			   basename="analysis/analysis2/plots/integration_elbow_plot"
+			   )
+
+# print plots
+for ( n in c("MCK332A1", "MCK332A2", "integration") ) {
+	cat( paste0("#### ", n, " {.tabset}\n\n") )
+	png <- paste0("analysis/analysis2/plots/", n, "_elbow_plot.png")
+	cat( paste0('<img src="', png, '">\n\n') )
+}
+
+```
+
+# Clustering
+
+Seurat use a graph-based clustering approach.
+A cell distance metric is derived from the previously identified principal components.
+The cellular distance matrix is then partitioned into clusters.
+Briefly, cells are embedded into in a graph structure - for example a K-nearest neighbor (KNN) graph, with edges drawn between cells with similar gene expression patterns, and then attempt to partition this graph into highly interconnected ‘quasi-cliques’ or ‘communities’.
+
+First construct a KNN graph based on the euclidean distance in PCA space and refine the edge weights between any two cells based on the shared overlap in their local neighborhoods (Jaccard similarity).
+
+```{r clustering, echo=TRUE, include=TRUE, results='hide', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE }
+
+
+## CLUSTERING
+
+# parallelization
+BiocParallel::register(MulticoreParam(24))
+base::options(future.globals.maxSize = 1000 * 1024^2 )
+future::plan("multiprocess", workers=24)
+
+# output directory
+dir.create("analysis/analysis2/rda", recursive=T, showWarnings=F)
+
+# MCK332A1
+obj <- load("analysis/analysis2/rda/MCK332A1_pca.rda")
+#obj <- load("analysis/analysis2/rda/MCK332A1_jackstraw.rda")
+sample1 <- get(obj)
+#sample1 <- Seurat::FindNeighbors(sample1, dims=1:16)
+##sample1 <- Seurat::FindNeighbors(sample1, dims=1:30)
+sample1 <- Seurat::FindNeighbors(sample1, dims=1:30)
+sample1 <- Seurat::FindClusters(sample1, resolution=.28)
+save(sample1, file="analysis/analysis2/rda/MCK332A1_clustered.rda")
+
+# MCK332A2
+obj <- load("analysis/analysis2/rda/MCK332A2_pca.rda")
+#obj <- load("analysis/analysis2/rda/MCK332A2_jackstraw.rda")
+sample2 <- get(obj)
+#sample2 <- Seurat::FindNeighbors(sample2, dims=1:34)
+##sample2 <- Seurat::FindNeighbors(sample2, dims=1:29)
+sample2 <- Seurat::FindNeighbors(sample2, dims=1:29)
+sample2 <- Seurat::FindClusters(sample2, resolution=.28)
+save(sample2, file="analysis/analysis2/rda/MCK332A2_clustered.rda")
+
+# integration
+obj <- load("analysis/analysis2/rda/integration_pca.rda")
+#obj <- load("analysis/analysis2/rda/integration_jackstraw.rda")
+both_samples <- get(obj)
+#both_samples <- Seurat::FindNeighbors(both_samples, dims=1:23)
+##both_samples <- Seurat::FindNeighbors(both_samples, dims=1:39)
+both_samples <- Seurat::FindNeighbors(both_samples, dims=1:39)
+both_samples <- Seurat::FindClusters(both_samples, resolution=.28)
+save(both_samples, file="analysis/analysis2/rda/integration_clustered.rda")
+
+```
+
+# Dimension reduction
+
+We are using non linear dimension reduction methods in order to capture more complex data structures than PCA does.
+
+## tSNE plots {.tabset}
+
+tSNE aims to place cells with similar local neighborhoods in high-dimensional space together in low-dimensional space.
+It’s inherently good at representing local relationships but poor at representing global relationships, so be careful when interpreting the results.
+
+```{r tsne, echo=TRUE, include=TRUE, results='hide', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE }
+
+
+## TSNE
+
+# output directory
+dir.create("analysis/analysis2/rda", recursive=T, showWarnings=F)
+
+# MCK332A1
+obj <- load("analysis/analysis2/rda/MCK332A1_clustered.rda")
+sample1 <- get(obj)
+#sample1 <- Seurat::RunTSNE(sample1 , dims=1:16)
+sample1 <- Seurat::RunTSNE(sample1 , dims=1:30)
+save(sample1, file="analysis/analysis2/rda/MCK332A1_tsne.rda")
+
+# MCK332A2
+obj <- load("analysis/analysis2/rda/MCK332A2_clustered.rda")
+sample2 <- get(obj)
+#sample2 <- Seurat::RunTSNE(sample2 , dims=1:34)
+sample2 <- Seurat::RunTSNE(sample2 , dims=1:29)
+save(sample2, file="analysis/analysis2/rda/MCK332A2_tsne.rda")
+
+# integration
+obj <- load("analysis/analysis2/rda/integration_clustered.rda")
+both_samples <- get(obj)
+#both_samples <- Seurat::RunTSNE(both_samples , dims=1:23)
+both_samples <- Seurat::RunTSNE(both_samples , dims=1:39)
+save(both_samples, file="analysis/analysis2/rda/integration_tsne.rda")
+
+```
+
+```{r tsne_plot, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE }
+
+
+## TSNE_PLOT
+
+############
+dim_plot <-#
+############
+	function(sample, reduction, lgd_pos, lgd_dir, title, basename) {
+
+		g <- Seurat::DimPlot(sample, reduction=reduction)
+		g <- g + ggtitle(title)
+		g <- g + theme(legend.position=lgd_pos, legend.direction=lgd_dir)
+
+		ggplot2::ggsave(paste0(basename, ".pdf"), g)
+		ggplot2::ggsave(paste0(basename, ".png"), g)
+
+		return(g)
+	}
+
+# output directory
+dir.create("analysis/analysis2/plots", recursive=T, showWarnings=F)
+
+# MCK332A1
+obj <- load("analysis/analysis2/rda/MCK332A1_tsne.rda")
+sample1 <- get(obj)
+g_tsne_1 <-
+	dim_plot(
+			 sample=sample1,
+			 reduction="tsne",
+			 lgd_pos="right",
+			 lgd_dir="vertical",
+			 title="MCK332A1",
+			 basename="analysis/analysis2/plots/MCK332A1_tsne_dim"
+			 )
+
+# MCK332A2
+obj <- load("analysis/analysis2/rda/MCK332A2_tsne.rda")
+sample2 <- get(obj)
+g_tsne_2 <-
+	dim_plot(
+			 sample=sample2,
+			 reduction="tsne",
+			 lgd_pos="right",
+			 lgd_dir="vertical",
+			 title="MCK332A2",
+			 basename="analysis/analysis2/plots/MCK332A2_tsne_dim"
+			 )
+
+# integration
+obj <- load("analysis/analysis2/rda/integration_tsne.rda")
+both_samples <- get(obj)
+g_tsne_I <-
+	dim_plot(
+			 sample=both_samples,
+			 reduction="tsne",
+			 lgd_pos="right",
+			 lgd_dir="vertical",
+			 title="integration",
+			 basename="analysis/analysis2/plots/integration_tsne_dim"
+			 )
+
+# print plots
+for ( n in c("MCK332A1", "MCK332A2", "integration") ) {
+	cat( paste0("### ", n, " {.tabset}\n\n") )
+	png <- paste0("analysis/analysis2/plots/", n, "_tsne_dim.png")
+	cat( paste0('<img src="', png, '">\n\n') )
+}
+
+```
+ 
+## Uniform Manifold Approximation and Projection
+
+UMAP is similar to tSNE but is faster and able to preserve more of the global data structure.
+
+### Clusters {.tabset}
+
+```{r umap, echo=TRUE, include=TRUE, results='hide', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE }
+
+
+## UMAP
+
+# output directory
+dir.create("analysis/analysis2/rda", recursive=T, showWarnings=F)
+
+# MCK332A1
+obj <- load("analysis/analysis2/rda/MCK332A1_tsne.rda")
+sample1 <- get(obj)
+#sample1 <- Seurat::RunUMAP(sample1 , dims=1:16)
+sample1 <- Seurat::RunUMAP(sample1 , dims=1:30)
+save(sample1, file="analysis/analysis2/rda/MCK332A1_umap.rda")
+
+# MCK332A2
+obj <- load("analysis/analysis2/rda/MCK332A2_tsne.rda")
+sample2 <- get(obj)
+#sample2 <- Seurat::RunUMAP(sample2 , dims=1:34)
+sample2 <- Seurat::RunUMAP(sample2 , dims=1:29)
+save(sample2, file="analysis/analysis2/rda/MCK332A2_umap.rda")
+
+# integration
+obj <- load("analysis/analysis2/rda/integration_tsne.rda")
+both_samples <- get(obj)
+#both_samples <- Seurat::RunUMAP(both_samples , dims=1:23)
+both_samples <- Seurat::RunUMAP(both_samples , dims=1:39)
+save(both_samples, file="analysis/analysis2/rda/integration_umap.rda")
+
+```
+
+```{r umap_plot, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE }
+
+
+## UMAP_PLOT
+
+############
+dim_plot <-#
+############
+	function(sample, reduction, lgd_pos, lgd_dir, title, basename, split=F) {
+
+		g <- Seurat::DimPlot(sample, reduction=reduction)
+
+		if (split) {
+			g <-
+				Seurat::DimPlot(
+								sample,
+								reduction=reduction,
+								split.by="condition"
+								)
+		}
+
+		g <- g + ggtitle(title)
+		g <- g + theme(legend.position=lgd_pos, legend.direction=lgd_dir)
+
+		if (split) {
+
+			ggplot2::ggsave(paste0(basename, ".pdf"), g, width=7, height=3.5)
+			ggplot2::ggsave(paste0(basename, ".png"), g, width=7, height=3.5)
+
+		} else {
+
+			ggplot2::ggsave(paste0(basename, ".pdf"), g)
+			ggplot2::ggsave(paste0(basename, ".png"), g)
+		}
+
+		return(g)
+	}
+
+# output directory
+dir.create("analysis/analysis2/plots", recursive=T, showWarnings=F)
+
+# MCK332A1
+obj <- load("analysis/analysis2/rda/MCK332A1_umap.rda")
+sample1 <- get(obj)
+g_umap_1 <-
+	dim_plot(
+			 sample=sample1,
+			 reduction="umap",
+			 lgd_pos="right",
+			 lgd_dir="vertical",
+			 title="MCK332A1",
+			 basename="analysis/analysis2/plots/MCK332A1_umap_dim"
+			 )
+
+# MCK332A2
+obj <- load("analysis/analysis2/rda/MCK332A2_umap.rda")
+sample2 <- get(obj)
+g_umap_2 <-
+	dim_plot(
+			 sample=sample2,
+			 reduction="umap",
+			 lgd_pos="right",
+			 lgd_dir="vertical",
+			 title="MCK332A2",
+			 basename="analysis/analysis2/plots/MCK332A2_umap_dim"
+			 )
+
+# integration
+obj <- load("analysis/analysis2/rda/integration_umap.rda")
+both_samples <- get(obj)
+g_umap_I <-
+	dim_plot(
+			 sample=both_samples,
+			 reduction="umap",
+			 lgd_pos="right",
+			 lgd_dir="vertical",
+			 title="integration",
+			 basename="analysis/analysis2/plots/integration_umap_dim"
+			 )
+g_umap_I_split <-
+	dim_plot(
+			 sample=both_samples,
+			 reduction="umap",
+			 lgd_pos="right",
+			 lgd_dir="vertical",
+			 title="integration",
+			 basename="analysis/analysis2/plots/integration_umap_dim_split",
+			 split=T
+			 )
+
+# print plots
+for ( n in c("MCK332A1", "MCK332A2", "integration") ) {
+	cat( paste0("#### ", n, " {.tabset}\n\n") )
+	png <- paste0("analysis/analysis2/plots/", n, "_umap_dim.png")
+	cat( paste0('<img src="', png, '">\n\n') )
+}
+
+cat('#### integration split {.tabset}')
+cat('<img src="analysis/analysis2/plots/integration_umap_dim_split.png">')
+cat('\n\n')
+
+```
+
+### Clusters composition
+
+The number of cells per cluster and per treatment (normalized by the total number of cells in each treatment).
+
+```{r composition, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE }
+
+
+## COMPOSITION
+
+###############
+composition <-#
+###############
+	function(integration, regex, column, factors, colors, basename) {
+
+		# meta data
+		md <- integration@meta.data
+
+		# number of cells from each sample in each cluster
+		counts <-
+			by(
+			   md,
+			   md[,grep(regex, names(md))],
+			   function(d) {
+				   table(d[,column])
+			   }
+			   )
+
+		# reshape for plotting
+		d <- as.data.frame( do.call(rbind, counts) )
+		df <- as.data.frame( apply(d, 2, function(x)x/sum(x)) )
+		df[,"cluster"] <- rownames(df)
+		df <- data.table::melt(df, idvars=factors)
+		names(df) <- c("cluster", column, "cells")
+
+		# order conditions
+		df[,column] <- factor(df[,column], levels=factors)
+
+		# order clusters
+		clusters <- unique(df[,"cluster"])
+		clusters <- clusters[ order( sprintf("%02d", as.numeric(clusters)) ) ]
+		df[,"cluster"] <- factor(df[,"cluster"], levels=clusters)
+
+		# plot
+		g <- ggplot(df, aes_string(x="cluster", fill=column, y="cells"))
+		g <- g + geom_bar(position="dodge2", stat="identity")
+		g <- g + scale_fill_manual(values=colors)
+		g <- g + ggtitle("Cluster composition")
+		g <- g + theme(plot.title=element_text(hjust=.5))
+
+		# save
+		ggplot2::ggsave(paste0(basename, ".pdf"), g)
+		ggplot2::ggsave(paste0(basename, ".png"), g)
+
+		# cluster names
+		rownames(d) <- paste0("cluster_", rownames(d))
+
+		return( list("g"=g, "counts"=d ) )
+	}
+
+# output directory
+dir.create("analysis/analysis2/plots", recursive=T, showWarnings=F)
+
+# plot params
+colors <- read.csv("input/plot/condition_colors.csv")
+colors <- setNames(as.character(colors[,"color"]), colors[,"condition"])
+conditions <- as.character( readLines("input/plot/conditions.txt") )
+
+# the integration dataset
+obj <- load("analysis/analysis2/rda/integration_umap.rda")
+both_samples <- get(obj)
+
+basename <- "analysis/analysis2/plots/integration_clusters_composition"
+cmp <-
+	composition(
+				integration=both_samples,
+				regex="integrated_snn.res.*",
+				column="condition",
+				factors=conditions,
+				colors=colors,
+				basename=basename
+				)
+
+DT::datatable(cmp[["counts"]])
+cat( paste0('\n\n<img src="', basename, '.png">\n\n') )
+
+```
+
+### Treatment {.tabset}
+
+Here we color the cells by treatment to visualize their distribution on the UMAP representation.
+
+```{r treatment, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE }
+
+
+## TREATMENT
+
+############
+dim_plot <-#
+############
+	function(
+				sample,
+				reduction,
+				group,
+				colors,
+				lgd_pos,
+				lgd_dir,
+				title,
+				basename,
+				split=F
+				) {
+
+		if (split) {
+			g <-
+				Seurat::DimPlot(
+									 sample,
+									 reduction=reduction,
+									 group.by=group,
+									 cols=colors,
+									 split.by="condition"
+									 )
+		} else {
+			g <-
+				Seurat::DimPlot(
+									 sample,
+									 reduction=reduction,
+									 group.by=group,
+									 cols=colors
+									 )
+		}
+
+		g <- g + ggtitle(title)
+		g <- g + theme(legend.position=lgd_pos, legend.direction=lgd_dir)
+
+		if (split) {
+
+			ggplot2::ggsave(paste0(basename, ".pdf"), g, width=7, height=3.5)
+			ggplot2::ggsave(paste0(basename, ".png"), g, width=7, height=3.5)
+
+		} else {
+
+			ggplot2::ggsave(paste0(basename, ".pdf"), g)
+			ggplot2::ggsave(paste0(basename, ".png"), g)
+		}
+
+		return(g)
+	}
+
+# output directory
+dir.create("analysis/analysis2/plots", recursive=T, showWarnings=F)
+
+# plot params
+colors <- read.csv("input/plot/condition_colors.csv")
+colors <- setNames(as.character(colors[,"color"]), colors[,"condition"])
+conditions <- as.character( readLines("input/plot/conditions.txt") )
+
+# MCK332A1
+obj <- load("analysis/analysis2/rda/MCK332A1_umap.rda")
+sample1 <- get(obj)
+basename1 <- "analysis/analysis2/plots/MCK332A1_condition_umap_dim_group"
+g_treat_1 <-
+	dim_plot(
+			 sample=sample1,
+			 reduction="umap",
+			 group="condition",
+			 colors=colors,
+			 lgd_pos="right",
+			 lgd_dir="vertical",
+			 title="MCK332A1",
+			 basename=basename1
+			 )
+
+# MCK332A2
+obj <- load("analysis/analysis2/rda/MCK332A2_umap.rda")
+sample2 <- get(obj)
+basename2 <- "analysis/analysis2/plots/MCK332A2_condition_umap_dim_group"
+g_treat_2 <-
+	dim_plot(
+			 sample=sample2,
+			 reduction="umap",
+			 group="condition",
+			 colors=colors,
+			 lgd_pos="right",
+			 lgd_dir="vertical",
+			 title="MCK332A2",
+			 basename=basename2
+			 )
+
+# integration
+obj <- load("analysis/analysis2/rda/integration_umap.rda")
+both_samples <- get(obj)
+md <- both_samples@meta.data
+md[,"condition"] <- factor(md[,"condition"], levels=conditions)
+both_samples@meta.data <- md
+basenameI <- "analysis/analysis2/plots/integration_condition_umap_dim_group"
+g_treat_I <-
+	dim_plot(
+			 sample=both_samples,
+			 reduction="umap",
+			 group="condition",
+			 colors=colors,
+			 lgd_pos="right",
+			 lgd_dir="vertical",
+			 title="integration",
+			 basename=basenameI
+			 )
+g_treat_I_split <-
+	dim_plot(
+			 sample=both_samples,
+			 reduction="umap",
+			 group="condition",
+			 colors=colors,
+			 lgd_pos="right",
+			 lgd_dir="vertical",
+			 title="integration",
+			 basename=paste0(basenameI, "_split"),
+			 split=T
+			 )
+
+# print plots
+for ( n in c("MCK332A1", "MCK332A2", "integration") ) {
+	cat( paste0("#### ", n, " {.tabset}\n\n") )
+	cat(
+		 paste0(
+				  '<img src="analysis/analysis2/plots/',
+				  n,
+				  '_condition_umap_dim_group.png">',
+				  '\n\n'
+				  )
+		 )
+}
+
+cat('#### integration split {.tabset}')
+cat('<img src="analysis/analysis2/plots/integration_condition_umap_dim_group_split.png">')
+cat('\n\n')
+
+```
+
+# Cluster marker genes
+
+We use the `FindAllMarkers` function of Seurat to perform differential expression analysis.
+It extracts the cells of each cluster and compares them to all the other cells.
+
+Usually, this part is performed with parameters that reduce the number of cells and genes to test.
+This allows to reduce the computing time, and also it attenuate the effect of multiple testing correction.
+However, GSEA requires to be provided with the full list of genes.
+So, we changed the parameters so the function tests and returns almost all the genes.
+
+More precisely, the parameters were the following:
+
+ * `test.use` was set to *wilcox*, which means we use the Wilcoxon test,
+ * `logfc.threshold` was set to *0*, which means we test all the genes even if the log fold change between the two groups is low,
+ * `min.pct` were set to *0*, which means we test all the genes even if they are detected in a very few percentage of the cells,
+ * `min.diff.pct` was set to `-Inf`, which means we test all the genes even if there is no difference in the fraction of detection between the two groups,
+ * `min.cells.group` was set to `0`, which means we test even if the number of cells in the groups is low.
+
+<span style="color:red">This parametrization affects the multiple testing correction.</span>
+<span style="color:red">So, it affect the adjusted p-values.</span>
+However, GSEA shouldn't be run without that.
+
+
+```{r all_markers, echo=TRUE, include=TRUE, results='hide', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE }
+
+
+## ALL_MARKERS
+
+# parallelization
+BiocParallel::register(MulticoreParam(24))
+base::options(future.globals.maxSize = 1000 * 1024^2 )
+future::plan("multiprocess", workers=24)
+
+# be careful with the default assay
+obj <- load("analysis/analysis2/rda/integration_umap.rda")
+both_samples <- get(obj)
+Seurat::DefaultAssay(both_samples) <- "RNA"
+
+# output directories
+dir.create("analysis/analysis2/rda", recursive=T, showWarnings=F)
+dir.create("analysis/analysis2/spreadsheets", recursive=T, showWarnings=F)
+
+################################################################################
+############################## WITH THRESHOLD ##################################
+################################################################################
+#
+#markers <-
+#	Seurat::FindAllMarkers(
+#						   both_samples,
+#						   only.pos=F,
+#						   logfc.threshold=.25,
+#						   min.pct=.25,
+#						   min.cells.feature=100
+#						   )
+#
+#n <- "integration_all_markers"
+#save(markers,
+#	  file=file.path("analysis/analysis2/rda", paste0(n, ".rda"))
+#	  )
+#write.csv(
+#		  markers,
+#		  file=file.path("analysis/analysis2/spreadsheets", paste0(n, ".csv")),
+#		  row.names=F
+#		  )
+
+###############################################################################
+######################## WITHOUT THRESHOLD FOR GSEA ###########################
+###############################################################################
+
+## to get the stat value from the DESeq call in FindMarkers (thanks to Gavin)
+#myDETest <- Seurat:::DESeq2DETest
+#body(myDETest)[[14]] <-
+#	substitute(
+#				  to.return <-
+#					  data.frame(
+#									 p_val=res$pvalue,
+#									 row.names=rownames(res),
+#									 stat=res$stat
+#									 )
+#				  )
+#body(myDETest)[[13]] <-
+#	substitute(
+#				  res <-
+#					  DESeq2::results(object=dds1,
+#											contrast=c("group", "Group1", "Group2"),
+#											alpha=0.05,
+#											parallel=T,
+#											...)
+#				  )
+#assignInNamespace("DESeq2DETest", myDETest, "Seurat")
+
+markers <-
+	Seurat::FindAllMarkers(
+								  both_samples,
+								  test.use="wilcox",
+								  features=rownames(both_samples),
+								  only.pos=F,
+								  logfc.threshold=0,
+								  min.diff.pct=-Inf,
+								  min.pct=0,
+								  min.cells.feature=0,
+								  min.cells.group=0,
+								  return.thresh=2
+						   )
+
+#n <- "integration_all_markers_no_threshold"
+n <- "integration_all_markers"
+save(markers,
+	  file=file.path("analysis/analysis2/rda", paste0(n, ".rda"))
+	  )
+write.csv(
+		  markers,
+		  file=file.path("analysis/analysis2/spreadsheets", paste0(n, ".csv")),
+		  row.names=F
+		  )
+
+```
+
+## Markers plots {.tabset}
+
+For each cluster, we take the 10 most significant marker genes and plot them on the UMAP representation.
+
+```{r all_markers_feat_plot, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE }
+
+
+## ALL_MARKERS_FEAT_PLOT
+
+###############
+plot_marker <-#
+###############
+	function(sample, feature, reduction, basename, split) {
+
+		genes <- rownames(sample@assays[[1]]@counts)
+
+		if ( ! feature %in% genes ) {
+
+			label <- paste(feature , "not found" )
+			g <- ggplot(data.frame(x=5, y=5), aes(x=x, y=y))
+			g <- g + geom_text(aes(x=5, y=5, label=label))
+
+		} else {
+
+			if (split) {
+
+				g <-
+					Seurat::FeaturePlot(
+										sample,
+										features=feature,
+										reduction=reduction,
+										split.by="condition"
+										)
+
+				ggplot2::ggsave(
+								paste0(basename, ".pdf"),
+								g, width=7, height=3.5
+								)
+				ggplot2::ggsave(
+								paste0(basename, ".png"),
+								g, width=7, height=3.5
+								)
+
+			} else {
+
+				g <-
+					Seurat::FeaturePlot(
+										sample,
+										features=feature,
+										reduction=reduction
+										)
+
+				ggplot2::ggsave(paste0(basename, ".pdf"), g)
+				ggplot2::ggsave(paste0(basename, ".png"), g)
+
+			}
+		}
+
+		return(g)
+	}
+
+# output directory
+dir.create("analysis/analysis2/plots/markers/all_markers",
+			  recursive=T, showWarnings=F)
+
+# load
+obj <- load("analysis/analysis2/rda/integration_all_markers.rda")
+markers <- get(obj)
+
+# be careful with the default assay
+obj <- load("analysis/analysis2/rda/integration_umap.rda")
+both_samples <- get(obj)
+Seurat::DefaultAssay(both_samples) <- "RNA"
+
+# threshold
+signif <- by(markers, markers[,"cluster"], function(d)d[d[,"p_val_adj"]<.05,])
+genes <- lapply(signif, function(d) d[ 1:min(10, nrow(d)) , "gene" ] )
+
+# all the clusters
+for ( n in names(genes) ) {
+
+	cat("###", n, "{.tabset}\n\n")
+
+	# all the marker genes
+	for ( feature in c(genes[[n]], "Il13", "Tnfrsf18", "Tnfrsf9") ) {
+
+		cat("####", feature, " {.tabset}\n\n")
+
+		#########################################################################
+
+		# path
+		filename <- paste0("integration_", n, "_", feature, "_featplot")
+		basename <-
+			file.path(
+					  "analysis/analysis2",
+					  "plots",
+					  "markers",
+					  "all_markers",
+					  filename
+					  )
+
+		# plot
+		g <-
+			plot_marker(
+						sample=both_samples,
+						feature=feature,
+						reduction="umap",
+						basename=basename,
+						split=F
+						)
+
+		# tab for markdown
+		cat("##### Grouped {.tabset}\n\n")
+		cat( paste0( '<img src="' , paste0(basename, ".png") , '">\n\n') )
+
+		#########################################################################
+
+		# path
+		filename <- paste0("integration_", n, "_", feature, "_featplot_split")
+		basename <-
+			file.path(
+					  "analysis/analysis2",
+					  "plots",
+					  "markers",
+					  "all_markers",
+					  filename
+					  )
+
+		# plot
+		gsplit <-
+			plot_marker(
+						sample=both_samples,
+						feature=feature,
+						reduction="umap",
+						basename=basename,
+						split=T
+						)
+
+		# tab for markdown
+		cat("##### Split {.tabset}\n\n")
+		cat( paste0( '<img src="' , paste0(basename, ".png") , '">\n\n') )
+	}
+}
+
+
+```
+
+## Violon plots {.tabset}
+
+For each cluster, we take the 10 most significant marker genes and plot their expression for each cell.
+
+```{r all_markers_vln_plot, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE }
+
+
+## ALL_MARKERS_VLN_PLOT
+
+###################
+vln_plot_marker <-#
+###################
+	function(sample, feature, basename, split) {
+
+		genes <- rownames(sample@assays[[1]]@counts)
+
+		if ( ! feature %in% genes ) {
+
+			label <- paste(feature , "not found" )
+			g <- ggplot(data.frame(x=5, y=5), aes(x=x, y=y))
+			g <- g + geom_text(aes(x=5, y=5, label=label))
+
+		} else {
+
+			if (split) {
+
+				g <- Seurat::VlnPlot(
+											sample,
+											features=feature,
+											split.by="condition",
+											pt.size=.3
+											)
+
+			} else {
+				g <- Seurat::VlnPlot(sample, features=feature, pt.size=.3)
+			}
+		}
+
+		ggplot2::ggsave(paste0(basename, ".pdf"), g)
+		ggplot2::ggsave(paste0(basename, ".png"), g)
+
+		return(g)
+	}
+
+# output directory
+dir.create("analysis/analysis2/plots/markers/all_markers",
+			  recursive=T, showWarnings=F)
+
+# load
+obj <- load("analysis/analysis2/rda/integration_all_markers.rda")
+markers <- get(obj)
+
+# be careful with the default assay
+obj <- load("analysis/analysis2/rda/integration_umap.rda")
+both_samples <- get(obj)
+Seurat::DefaultAssay(both_samples) <- "RNA"
+
+# threshold
+signif <- by(markers, markers[,"cluster"], function(d)d[d[,"p_val_adj"]<.05,])
+genes <- lapply(signif, function(d) d[ 1:min(10, nrow(d)) , "gene" ] )
+
+# all the clusters
+for ( n in names(genes) ) {
+
+	cat("###", n, "{.tabset}\n\n")
+
+	# all the marker genes
+	for ( feature in c(genes[[n]], "Il13", "Tnfrsf18", "Tnfrsf9") ) {
+
+		cat("####", feature, " {.tabset}\n\n")
+
+		#########################################################################
+
+		# path
+		filename <- paste0("integration_", n, "_", feature, "_vlnplot")
+		basename <-
+			file.path(
+					  "analysis/analysis2",
+					  "plots",
+					  "markers",
+					  "all_markers",
+					  filename
+					  )
+
+		# plot
+		g <-
+			vln_plot_marker(
+							sample=both_samples,
+							feature=feature,
+							basename=basename,
+							split=F
+							)
+
+		# tab for markdown
+		cat("##### Grouped \n\n")
+		cat( paste0( '<img src="' , paste0(basename, ".png") , '">\n\n') )
+
+		#########################################################################
+
+		# path
+		filename <- paste0("integration_", n, "_", feature, "_vlnplot_split")
+		basename <-
+			file.path(
+					  "analysis/analysis2",
+					  "plots",
+					  "markers",
+					  "all_markers",
+					  filename
+					  )
+
+		# plot
+		gsplit <-
+			vln_plot_marker(
+							sample=both_samples,
+							feature=feature,
+							basename=basename,
+							split=T
+							)
+
+		# tab for markdown
+		cat("##### Split \n\n")
+		cat( paste0( '<img src="' , paste0(basename, ".png") , '">\n\n') )
+	}
+}
+
+```
+
+## Ontology {.tabset}
+
+For each cluster, we take all the significant marker genes and run an ontology analysis.
+
+```{r all_markers_ontology, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE }
+
+
+## ALL_MARKERS_ONTOLOGY
+
+# load
+obj <- load("analysis/analysis2/rda/integration_all_markers.rda")
+markers <- get(obj)
+
+# Duncan prefers to keep only the positive markers
+markers <- markers[ markers[,"avg_logFC"] > 0 , ]
+
+# threshold
+signif <- by(markers, markers[,"cluster"], function(d)d[d[,"p_val_adj"]<.05,])
+genes <- lapply(signif, function(d) d[ 1:min(10, nrow(d)) , "gene" ] )
+
+# different types of ontologies
+sub_ontologies <-
+	list(
+		  "BP"="Biological Process",
+		  "MF"="Molecular Function",
+		  "CC"="Cellular Component"
+		  )
+
+# output directory
+dir.create("analysis/analysis2/spreadsheets/ontology/all_markers",
+			  recursive=T, showWarnings=F)
+
+# output directory
+d <- file.path(
+					"analysis",
+					"analysis2",
+					"spreadsheets",
+					"ontology",
+					"all_markers"
+					)
+
+# all the clusters
+for ( n in names(signif) ) {
+
+	cat("### Cluster", n, "{.tabset}\n\n")
+	df <- signif[[n]]
+	features <- df[,"gene"]
+
+	for ( nn in names(sub_ontologies) ) {
+
+		ego <- clusterProfiler::enrichGO(
+								gene=features,
+								OrgDb=org.Mm.eg.db,
+								ont=nn,
+								keyType="SYMBOL",
+								pAdjustMethod="BH",
+								pvalueCutoff=.01,
+								qvalueCutoff=.05
+								)
+
+		# save
+		filename <- paste0("cluster_", n, "_", nn, ".csv")
+		filepath <- file.path(d, filename)
+		write.csv(ego, filepath)
+
+		cat( paste("####", sub_ontologies[[nn]], "{.tabset}\n\n") )
+		tab <-
+			knitr::kable( as.data.frame(ego) ) %>%
+				kableExtra::kable_styling() %>%
+					scroll_box(width="100%", height = "400px")
+		print(tab)
+	}
+}
+
+```
+
+## Heatmap
+
+For each cluster, we take the 10 marker genes with the lowest adjusted p-values and draw an heatmap.
+The genes are selected only among the list of the 2000 highly variable genes use to integrate the samples.
+
+```{r all_markers_heatmap, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE, fig.width=10, fig.height=9 }
+
+
+## ALL_MARKERS_HEATMAP
+
+###################
+markers_heatmap <-#
+###################
+	function(sample, markers, n, basename)
+	{
+		top10 <- markers %>% group_by(cluster) %>% top_n(n=n, wt=avg_logFC)
+
+		g <- Seurat::DoHeatmap(both_samples, features=top10$gene, slot="RNA")
+
+		ggplot2::ggsave(paste0(basename, ".pdf"), g)
+		ggplot2::ggsave(paste0(basename, ".png"), g)
+
+		return(g)
+	}
+
+# output directory
+dir.create("analysis/analysis2/plots/markers/all_markers",
+			  recursive=T, showWarnings=F)
+
+# the integration dataset, be careful with the default assay
+obj <- load("analysis/analysis2/rda/integration_umap.rda")
+both_samples <- get(obj)
+
+# this will not work with DoHeatmap
+#Seurat::DefaultAssay(both_samples) <- "RNA"
+
+# the markers
+obj <- load("analysis/analysis2/rda/integration_all_markers.rda")
+markers <- get(obj)
+
+# Duncan prefers to keep only the positive markers
+markers <- markers[ markers[,"avg_logFC"] > 0 , ]
+
+# top 10 most significant genes
+genes <- rownames( Seurat::GetAssayData(both_samples) )
+top10 <-
+	by(markers, markers["cluster"],
+		function(d) {
+
+			g <- setNames(d[,"p_val_adj"], d[,"gene"])
+
+			n <- 10
+			gg <- g[1:n]
+
+			while ( sum( names(gg) %in% genes ) < 10 ) {
+				n <- n + 1
+				gg <- g[1:n]
+			}
+
+			return(names(gg))
+		})
+top10 <- unlist(top10)
+
+# plot
+g <- Seurat::DoHeatmap(both_samples, features=top10)
+
+# save
+filename <- "integration_all_markers_heatmap"
+basename <- file.path(
+							 "analysis",
+							 "analysis2",
+							 "plots",
+							 "markers",
+							 "all_markers",
+							 filename
+							 )
+ggplot2::ggsave(paste0(basename, ".pdf"), g)
+ggplot2::ggsave(paste0(basename, ".png"), g)
+
+# rmarkdown
+cat(paste0('<img src="', basename, '.png">\n\n'))
+
+```
+
+## GSEA
+
+Here we run GSEA for the all comparisons we did in this section.
+We don't make any plot or table because GSEA makes them for us.
+The results can be found in `analysis_part_2_detcs/gsea/all_markers`.
+
+```{r all_markers_gsea, echo=TRUE, include=TRUE, results='hide', message=FALSE, warning=FALSE, cache=TRUE, strip.white=TRUE }
+
+## ALL_MARKERS_GSEA
+
+# load
+#filename <- "integration_all_markers_no_threshold"
+filename <- "integration_all_markers"
+obj <- load( file.path("analysis/analysis2/rda", paste0(filename, ".rda")) )
+markers <- get(obj)
+
+# gsea conf
+java_md  <- "Java/1.8.0_131"
+jarpath <- "/camp/stp/babs/working/bahn/programs/java/gsea/gsea-3.0.jar"
+gmt_files <- sort(list.files("input/gsea", full.names=T))
+names(gmt_files) <- gsub(".*/(\\w+)\\..*.gmt", "\\1", gmt_files)
+
+# output directories
+dir.create("analysis/analysis2/rnk/all_markers", recursive=T, showWarnings=F)
+
+template <- "
+module load %s
+java -Xmx10g -cp %s \\
+	xtools.gsea.GseaPreranked \\
+	-gmx %s \\
+	-nperm 1000 \\
+	-scoring_scheme classic \\
+	-norm meandiv \\
+	-rnk %s \\
+	-gui false \\
+	-out %s \\
+	-rpt_label %s \\
+	-set_min 3 \\
+	-set_max 50000 \\
+	-rnd_seed timestamp \\
+	-plot_top_x 50 \\
+	-zip_report false \\
+	-make_sets true \\
+	-create_svgs false
+"
+
+gsea <-
+	by(markers, markers[,"cluster"],
+		function(df) {
+
+			#n <- "0"
+			#df <- markers[ markers[,"cluster"] == n , ]
+
+			n <- df[1, "cluster"]
+
+			df <- df[ order(df[,"avg_logFC"], decreasing=T) , ]
+			rnk <- data.frame(
+									"symbol"=toupper(df[,"gene"]),
+									"avg_logFC"=df[,"avg_logFC"]
+									)
+
+			cluster <- paste0("cluster_", n)
+			rnk_name <- paste0(cluster, ".rnk")
+			rnk_path <- file.path("analysis/analysis2/rnk/all_markers", rnk_name)
+			write.table(rnk, file=rnk_path, quote=F, row.names=F, sep="\t")
+
+			for ( gmt in names(gmt_files) ) {
+				label <- paste("all_markers", cluster, gmt, sep="_")
+				out_dir <- file.path("analysis/analysis2/gsea/all_markers",
+											cluster, gmt)
+				dir.create(out_dir, recursive=T, showWarnings=F)
+				command <- sprintf(template, java_md, jarpath, gmt_files[[gmt]],
+										 rnk_path, out_dir, label)
+				cat(command)
+				system(command)
+			}
+		})
+
+```
+
+# Cluster marker genes by one to one comparison
+
+In that section, we take the samples individually (*IgG control*, *anti-Skint1*, and the integration of them), and we test all the clusters against each other for differential expression.
+Those cluster comparisons are done inside the sample.
+For example, we compare the cluster 2 of the sample *IgG control* to the cluster 3 of the sample *IgG control*.
+
+Usually, this part is performed with parameters that reduce the number of cells and genes to test.
+This allows to reduce the computing time, and also it attenuate the effect of multiple testing correction.
+However, GSEA requires to be provided with the full list of genes.
+So, we changed the parameters so the function tests and returns almost all the genes.
+
+More precisely, the parameters were the following:
+
+ * `test.use` was set to *wilcox*, which means we use the Wilcoxon test,
+ * `logfc.threshold` was set to *0*, which means we test all the genes even if the log fold change between the two groups is low,
+ * `min.pct` were set to *0*, which means we test all the genes even if they are detected in a very few percentage of the cells,
+ * `min.diff.pct` was set to `-Inf`, which means we test all the genes even if there is no difference in the fraction of detection between the two groups,
+ * `min.cells.group` was set to `0`, which means we test even if the number of cells in the groups is low.
+
+<span style="color:red">This parametrization affects the multiple testing correction.</span>
+<span style="color:red">So, it affect the adjusted p-values.</span>
+However, GSEA shouldn't be run without that.
+
+
+## The markers by comparison {.tabset}
+
+We use the `FindMarkers` function of Seurat to identify the genes differentially expressed between two clusters.
+
+Three important parameterizations of the function have to be mentioned:
+
+ * `test.use` were set to *wilcox*, which means we use the Wilcoxon test,
+ * `logfc.threshold` were set to *0.5*, which means we only test the genes that have a 0.5 fold change between the two treatments,
+ * `min.pct` were set to *0.1*, which means that we only test the genes that are detected in at least 10 % of the cells of the cluster.
+
+Here are the tested genes with their adjusted p-value for each sample:
+
+```{r inside_samples, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE }
+
+
+## INSIDE_SAMPLES
+
+# output directory
+dir.create(
+			"analysis/analysis2/spreadsheets/cluster_comparisons/inside_samples",
+			recursive=T, showWarnings=F)
+
+##########################
+inside_samples_markers <-#
+##########################
+	function(sample, name) {
+
+	# all possible cluster comparisons
+	clusters <- levels(sample$seurat_clusters)
+	comparisons <- combn(clusters, 2, simplify=F)
+	names(comparisons) <-
+		unlist(lapply(comparisons,
+					  function(c) {
+						  paste(c[1], c[2], sep=".vs.")
+					  }))
+
+	# output directory
+	d <- file.path(
+				   "analysis",
+				   "analysis2",
+				   "spreadsheets",
+				   "cluster_comparisons",
+				   "inside_samples"
+				   )
+
+	# differential genes between clusters
+	markers <-
+		lapply(comparisons,
+			   function(c) {
+
+				   # the clusters
+				   c1 <- c[1]
+				   c2 <- c[2]
+
+				   # run seurat
+				   df <-
+					   Seurat::FindMarkers(
+												  sample,
+												  features=rownames(sample),
+												  ident.1=c2,
+												  ident.2=c1,
+												  test.use="wilcox",
+												  only.pos=F,
+												  logfc.threshold=0,
+												  min.diff.pct=-Inf,
+												  min.pct=0,
+												  min.cells.feature=0,
+												  min.cells.group=0
+												  )
+				   # annotation
+				   df[,"Cluster1"] <- c1
+				   df[,"Cluster2"] <- c2
+				   df[,"Comparison"] <-
+					   paste( df[,"Cluster1"], df[,"Cluster2"], sep=" VS ")
+				   df[,"Gene"] <- rownames(df)
+
+				   # save
+				   comparison <- paste( c1 , c2 , sep=".vs." )
+				   filename <- paste0(name, "_", comparison, ".csv")
+				   filepath <- file.path(d, filename)
+				   write.csv(df, filepath, row.names=F)
+
+				   return(df)
+			   })
+
+	# general table
+	df_markers <- as.data.frame( do.call(rbind, markers) )
+	df_markers[,"final_p_adj"] <-
+		p.adjust(df_markers[,"p_val"], method="bonferroni")
+	write.csv( df_markers , file.path(d, paste0(name, ".csv")) )
+
+	return( df_markers[ df_markers[,"final_p_adj"] < .05 , ] )
+
+	}
+
+# load
+obj <- load("analysis/analysis2/rda/MCK332A1_umap.rda")
+sample1 <- get(obj)
+obj <- load("analysis/analysis2/rda/MCK332A2_umap.rda")
+sample2 <- get(obj)
+obj <- load("analysis/analysis2/rda/integration_umap.rda")
+both_samples <- get(obj)
+Seurat::DefaultAssay(both_samples) <- "RNA"
+
+# run
+markers1 <- inside_samples_markers(sample1, "MCK332A1")
+markers2 <- inside_samples_markers(sample2, "MCK332A2")
+markersI <- inside_samples_markers(both_samples, "integration")
+
+# display
+cat("### MCK332A1 {.tabset}\n\n")
+m <- markers1[ , -grep("^Cluster[12]$", names(markers1)) ]; rownames(m) <- NULL
+DT::datatable(m, rownames=F)
+cat("\n\n")
+cat("### MCK332A2 {.tabset}\n\n")
+m <- markers2[ , -grep("^Cluster[12]$", names(markers2)) ]; rownames(m) <- NULL
+DT::datatable(m, rownames=F)
+cat("\n\n")
+cat("### integration {.tabset}\n\n")
+m <- markersI[ , -grep("^Cluster[12]$", names(markersI)) ]; rownames(m) <- NULL
+DT::datatable(m, rownames=F)
+
+```
+
+## Marker plots {.tabset}
+
+For each sample, we filter the significant marker genes that are unique to each comparison.
+Then, we plot the expression values of those genes on the UMAP.
+
+
+```{r unique_markers, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE }
+
+
+## UNIQUE_MARKERS
+
+# output directories
+dir.create(
+			"analysis/analysis2/spreadsheets/cluster_comparisons/inside_samples",
+			recursive=T, showWarnings=F)
+dir.create(
+			"analysis/analysis2/plots/cluster_comparisons/inside_samples",
+			recursive=T, showWarnings=F)
+
+##########################
+inside_samples_markers <-#
+##########################
+	function(sample, name) {
+
+	# all possible cluster comparisons
+	clusters <- levels(sample$seurat_clusters)
+	comparisons <- combn(clusters, 2, simplify=F)
+	names(comparisons) <-
+		unlist(lapply(comparisons,
+					  function(c) {
+						  paste(c[1], c[2], sep=".vs.")
+					  }))
+
+	# output directory
+	d <- file.path(
+				   "analysis",
+				   "analysis2",
+				   "spreadsheets",
+				   "cluster_comparisons",
+				   "inside_samples"
+				   )
+
+	# differential genes between clusters
+	markers <-
+		lapply(comparisons,
+			   function(c) {
+
+				   # the clusters
+				   c1 <- c[1]
+				   c2 <- c[2]
+
+				   # run seurat
+				   df <-
+					   Seurat::FindMarkers(
+										   sample,
+										   ident.1=c1,
+										   ident.2=c2,
+										   logfc.threshold=0,
+										   min.pct=0,
+										   min.cells.feature=0,
+										   min.cells.group=0
+										   )
+				   # annotation
+				   df[,"Cluster1"] <- c1
+				   df[,"Cluster2"] <- c2
+				   df[,"Comparison"] <-
+					   paste( df[,"Cluster1"], df[,"Cluster2"], sep=" VS ")
+				   df[,"Gene"] <- rownames(df)
+
+				   return(df)
+			   })
+
+	# general table
+	df_markers <- as.data.frame( do.call(rbind, markers) )
+	df_markers[,"final_p_adj"] <-
+		p.adjust(
+				 df_markers[,"p_val"],
+				 method="bonferroni",
+				 n=nrow(sample)*length(markers)
+				 )
+	write.csv( df_markers , file.path(d, paste0(name, ".csv")) )
+
+	return(df_markers)
+	}
+
+###############
+plot_marker <-#
+###############
+	function(name, row, sample) {
+
+		comparison <- paste(
+							paste0("cluster", row[1,"Cluster1"]),
+							paste0("cluster", row[1,"Cluster2"]),
+							sep=".vs."
+							)
+		gene <- row[,"Gene"]
+
+		d <- file.path(
+					   "analysis",
+					   "analysis2",
+					   "plots",
+					   "cluster_comparisons",
+					   "inside_samples",
+					   name
+					   )
+		dir.create(d, recursive=T)
+
+		basename <- paste0(comparison, "_", gene)
+		basepath <- file.path(d, basename)
+
+		g <- Seurat::FeaturePlot(both_samples, features=gene)
+		ggsave(g, file=paste0(basepath, ".pdf"))
+		png <- paste0(basepath, ".png")
+		ggsave(g, file=png)
+
+		cat( paste0("##### ", gene, " {.tabset}\n\n") )
+		cat( paste0('<img src="', png, '">\n\n') )
+
+		return(g)
+	}
+
+#################
+unique_marker <-#
+#################
+	function(name, sample, df) {
+
+		counts <- table(df[,"Gene"])
+		markers <- sort(names(counts[ which(counts == 1) ]))
+		df_markers <- df[ df[,"Gene"] %in% markers , ]
+		df_markers <- df[ df[,"final_p_adj"] < .05 , ]
+
+		plots <-
+			by(
+			   df_markers,
+			   df_markers[,"Comparison"],
+			   function(cdf) {
+
+				   comparison <- cdf[1,"Comparison"]
+				   cat( paste0("#### ", comparison, " {.tabset}\n\n") )
+
+					d <- cdf[ order(cdf[,"final_p_adj"]) , ]
+					d <- d[1:min(10,nrow(df)),]
+
+				   gg <- by(
+							d,
+							d[,"Gene"],
+							function(r) {
+								plot_marker(name, r, sample)
+							})
+
+				   return(gg)
+			   })
+	}
+
+# load
+obj <- load("analysis/analysis2/rda/MCK332A1_umap.rda")
+sample1 <- get(obj)
+obj <- load("analysis/analysis2/rda/MCK332A2_umap.rda")
+sample2 <- get(obj)
+obj <- load("analysis/analysis2/rda/integration_umap.rda")
+both_samples <- get(obj)
+Seurat::DefaultAssay(both_samples) <- "RNA"
+
+# run
+markers1 <- inside_samples_markers(sample1, "MCK332A1")
+markers2 <- inside_samples_markers(sample2, "MCK332A2")
+markersI <- inside_samples_markers(both_samples, "integration")
+
+# display
+cat("### MCK332A1 {.tabset}\n\n")
+g1 <- unique_marker("MCK332A1", sample1, markers1)
+cat("### MCK332A2 {.tabset}\n\n")
+g2 <- unique_marker("MCK332A2", sample2, markers2)
+cat("### integration {.tabset}\n\n")
+gI <- unique_marker("integration", both_samples, markersI)
+
+```
+
+## Violon plots {.tabset}
+
+For each sample, we filter the significant marker genes that are unique to each comparison.
+Then, we plot the expression values of those genes for each cell.
+
+
+```{r unique_markers_vplots, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE }
+
+
+## UNIQUE_MARKERS_VPLOTS
+
+# output directories
+dir.create(
+			"analysis/analysis2/spreadsheets/cluster_comparisons/inside_samples",
+			recursive=T, showWarnings=F)
+dir.create(
+			"analysis/analysis2/plots/cluster_comparisons/inside_samples",
+			recursive=T, showWarnings=F)
+
+##########################
+inside_samples_markers <-#
+##########################
+	function(sample, name) {
+
+	# all possible cluster comparisons
+	clusters <- levels(sample$seurat_clusters)
+	comparisons <- combn(clusters, 2, simplify=F)
+	names(comparisons) <-
+		unlist(lapply(comparisons,
+					  function(c) {
+						  paste(c[1], c[2], sep=".vs.")
+					  }))
+
+	# output directory
+	d <- file.path(
+				   "analysis",
+				   "analysis2",
+				   "spreadsheets",
+				   "cluster_comparisons",
+				   "inside_samples"
+				   )
+
+	# differential genes between clusters
+	markers <-
+		lapply(comparisons,
+			   function(c) {
+
+				   # the clusters
+				   c1 <- c[1]
+				   c2 <- c[2]
+
+				   # run seurat
+				   df <-
+					   Seurat::FindMarkers(
+										   sample,
+										   ident.1=c1,
+										   ident.2=c2,
+										   logfc.threshold=0,
+										   min.pct=0,
+										   min.cells.feature=0,
+										   min.cells.group=0
+										   )
+				   # annotation
+				   df[,"Cluster1"] <- c1
+				   df[,"Cluster2"] <- c2
+				   df[,"Comparison"] <-
+					   paste( df[,"Cluster1"], df[,"Cluster2"], sep=" VS ")
+				   df[,"Gene"] <- rownames(df)
+
+				   return(df)
+			   })
+
+	# general table
+	df_markers <- as.data.frame( do.call(rbind, markers) )
+	df_markers[,"final_p_adj"] <-
+		p.adjust(
+				 df_markers[,"p_val"],
+				 method="bonferroni",
+				 n=nrow(sample)*length(markers)
+				 )
+	write.csv( df_markers , file.path(d, paste0(name, ".csv")) )
+
+	return(df_markers)
+	}
+
+###############
+violon_plot <-#
+###############
+	function(name, row, sample) {
+
+		comparison <- paste(
+							paste0("cluster", row[1,"Cluster1"]),
+							paste0("cluster", row[1,"Cluster2"]),
+							sep=".vs."
+							)
+		gene <- row[,"Gene"]
+
+		d <- file.path(
+					   "analysis",
+					   "analysis2",
+					   "plots",
+					   "cluster_comparisons",
+					   "inside_samples",
+					   name
+					   )
+		dir.create(d, recursive=T)
+
+		basename <- paste0("violon_", comparison, "_", gene)
+		basepath <- file.path(d, basename)
+
+		g <- Seurat::VlnPlot(both_samples, features=gene, pt.size=.3)
+		ggplot2::ggsave(g, file=paste0(basepath, ".pdf"))
+		png <- paste0(basepath, ".png")
+		ggplot2::ggsave(g, file=png)
+
+		cat( paste0("##### ", gene, " {.tabset}\n\n") )
+		cat( paste0('<img src="', png, '">\n\n') )
+
+		return(g)
+	}
+
+#################
+unique_marker <-#
+#################
+	function(name, sample, df) {
+
+		counts <- table(df[,"Gene"])
+		markers <- sort(names(counts[ which(counts == 1) ]))
+		df_markers <- df[ df[,"Gene"] %in% markers , ]
+		df_markers <- df[ df[,"final_p_adj"] < .05 , ]
+
+		plots <-
+			by(
+			   df_markers,
+			   df_markers[,"Comparison"],
+			   function(cdf) {
+
+				   comparison <- cdf[1,"Comparison"]
+				   cat( paste0("#### ", comparison, " {.tabset}\n\n") )
+
+					d <- cdf[ order(cdf[,"final_p_adj"]) , ]
+					d <- d[1:min(10,nrow(df)),]
+
+				   gg <- by(
+							d,
+							d[,"Gene"],
+							function(r) {
+								violon_plot(name, r, sample)
+							})
+
+				   return(gg)
+			   })
+	}
+
+
+# load
+obj <- load("analysis/analysis2/rda/MCK332A1_umap.rda")
+sample1 <- get(obj)
+obj <- load("analysis/analysis2/rda/MCK332A2_umap.rda")
+sample2 <- get(obj)
+obj <- load("analysis/analysis2/rda/integration_umap.rda")
+both_samples <- get(obj)
+Seurat::DefaultAssay(both_samples) <- "RNA"
+
+# run
+markers1 <- inside_samples_markers(sample1, "MCK332A1")
+markers2 <- inside_samples_markers(sample2, "MCK332A2")
+markersI <- inside_samples_markers(both_samples, "integration")
+
+# display
+cat("### MCK332A1 {.tabset}\n\n")
+g1 <- unique_marker("MCK332A1", sample1, markers1)
+cat("### MCK332A2 {.tabset}\n\n")
+g2 <- unique_marker("MCK332A2", sample2, markers2)
+cat("### integration {.tabset}\n\n")
+gI <- unique_marker("integration", both_samples, markersI)
+
+```
+
+## GSEA
+
+Here we run GSEA for the all comparisons we did in this section.
+We don't make any plot or table because GSEA makes them for us.
+The results can be found in `analysis_part_2_detcs/gsea/inside_samples`.
+
+```{r inside_samples_gsea, echo=TRUE, include=TRUE, results='hide', message=FALSE, warning=FALSE, cache=TRUE, strip.white=TRUE }
+
+## INSIDE_SAMPLES_GSEA
+
+# load
+dirpath <- "analysis/analysis2/spreadsheets/cluster_comparisons/inside_samples"
+pattern <- "(\\w+)_(\\d).vs.(\\d).csv$"
+files <- sort(list.files(dirpath, pattern=pattern, full.names=T))
+comparisons_names <- gsub(paste0(".*/", pattern), "\\1_\\2.vs.\\3", files)
+names(files) <- comparisons_names
+
+# gsea conf
+java_md  <- "Java/1.8.0_131"
+jarpath <- "/camp/stp/babs/working/bahn/programs/java/gsea/gsea-3.0.jar"
+gmt_files <- sort(list.files("input/gsea", full.names=T))
+names(gmt_files) <- gsub(".*/(\\w+)\\..*.gmt", "\\1", gmt_files)
+
+# output directories
+dir.create("analysis/analysis2/rnk/inside_samples", recursive=T,
+			  showWarnings=F)
+
+template <- "
+module load %s
+java -Xmx10g -cp %s \\
+	xtools.gsea.GseaPreranked \\
+	-gmx %s \\
+	-nperm 1000 \\
+	-scoring_scheme classic \\
+	-norm meandiv \\
+	-rnk %s \\
+	-gui false \\
+	-out %s \\
+	-rpt_label %s \\
+	-set_min 3 \\
+	-set_max 50000 \\
+	-rnd_seed timestamp \\
+	-plot_top_x 50 \\
+	-zip_report false \\
+	-make_sets true \\
+	-create_svgs false
+"
+
+for ( n in names(files) ) {
+
+	df <- read.csv(files[[n]])
+	df <- df[ order(df[,"avg_logFC"], decreasing=T) , ]
+	rnk <- data.frame(
+							"symbol"=toupper(df[,"Gene"]),
+							"avg_logFC"=df[,"avg_logFC"]
+							)
+
+	rnk_name <- paste0(n, ".rnk")
+	rnk_path <- file.path("analysis/analysis2/rnk/inside_samples", rnk_name)
+	write.table(rnk, file=rnk_path, quote=F, row.names=F, sep="\t")
+
+	for ( gmt in names(gmt_files) ) {
+		label <- paste("inside_samples", n, gmt, sep="_")
+		out_dir <- file.path("analysis/analysis2/gsea/inside_samples", n, gmt)
+		dir.create(out_dir, recursive=T, showWarnings=F)
+		command <- sprintf(template, java_md, jarpath, gmt_files[[gmt]],
+								 rnk_path, out_dir, label)
+		cat(command)
+		system(command)
+	}
+}
+
+```
+
+# Cluster marker genes between samples
+
+Here we compare each cluster in the *IgG control* treatment to its counterpart in the *anti-Skint1* treatment.
+For example we compare the cluster 3 of the *IgG control* treatment to the cluster 3 of the *anti-Skint1* treatment.
+
+## Genes {.tabset}
+
+We use the `FindMarkers` function of Seurat to identify the genes differentially expressed between the two treatments for each cluster.
+
+Usually, this part is performed with parameters that reduce the number of cells and genes to test.
+This allows to reduce the computing time, and also it attenuate the effect of multiple testing correction.
+However, GSEA requires to be provided with the full list of genes.
+So, we changed the parameters so the function tests and returns almost all the genes.
+
+More precisely, the parameters were the following:
+
+ * `test.use` was set to *wilcox*, which means we use the Wilcoxon test,
+ * `logfc.threshold` was set to *0*, which means we test all the genes even if the log fold change between the two groups is low,
+ * `min.pct` were set to *0*, which means we test all the genes even if they are detected in a very few percentage of the cells,
+ * `min.diff.pct` was set to `-Inf`, which means we test all the genes even if there is no difference in the fraction of detection between the two groups,
+ * `min.cells.group` was set to `0`, which means we test even if the number of cells in the groups is low.
+
+<span style="color:red">This parametrization affects the multiple testing correction.</span>
+<span style="color:red">So, it affect the adjusted p-values.</span>
+However, GSEA shouldn't be run without that.
+
+Here are the tested genes with their adjusted p-value:
+
+```{r between_samples, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE }
+
+
+## BETWEEN_SAMPLES
+
+# output directory
+dir.create(
+			"analysis/analysis2/spreadsheets/cluster_comparisons/between_samples",
+			recursive=T, showWarnings=F)
+
+obj <- load("analysis/analysis2/rda/integration_umap.rda")
+both_samples <- get(obj)
+Seurat::DefaultAssay(both_samples) <- "RNA"
+
+cd_order <- c("IgG control", "anti-Skint1")
+condition <- both_samples@meta.data[,"condition"]
+both_samples@meta.data[,"condition"] <- factor(condition, levels=cd_order)
+
+clusters <- levels(both_samples$seurat_clusters)
+
+both_samples$condition.cluster <-
+	paste(both_samples$condition, both_samples$seurat_clusters, sep=".")
+
+conditions <- unique(both_samples$condition)
+condition.cluster <- lapply(conditions, function(x)paste(x, clusters, sep="."))
+names(condition.cluster) <- conditions
+comparisons <- do.call(cbind, condition.cluster)
+
+Idents(both_samples) <- "condition.cluster"
+
+diff_genes <-
+	apply(comparisons, 1,
+		  function(r) {
+
+			  c1 <- r[1]
+			  c2 <- r[2]
+
+			  markers <- NULL
+
+			  tryCatch(
+			   	   markers <-
+			   	       Seurat::FindMarkers(
+														both_samples,
+														ident.1=c2,
+														ident.2=c1,
+														test.use="wilcox",
+														features=rownames(both_samples),
+														only.pos=F,
+														logfc.threshold=0,
+														min.pct=0,
+														min.diff.pct=-Inf,
+														min.cells.feature=0,
+														min.cells.group=0
+														),
+			   	   error=function(e)e
+
+			   	   )
+
+			  if ( is.null(markers) ) {
+
+			     df <- data.frame(
+			   					"p_val"=NA,
+			   				   "avg_logFC"=NA,
+			   				   "pct.1"=NA,
+			   				   "pct.2"=NA,
+			   				   "p_val_adj"=NA
+			   				   )
+
+			  } else {
+
+			     df <- markers
+			  }
+
+			  # annotation
+			  df[,"Cluster1"] <- c1
+			  df[,"Cluster2"] <- c2
+			  df[,"Gene"] <- as.character(rownames(df))
+			  rownames(df) <- NULL
+
+			  # save
+			  d <- "analysis/analysis2/spreadsheets/cluster_comparisons"
+			  comparison <- paste( c1 , c2 , sep=".vs." )
+			  comparison <- gsub(" ", "_", comparison)
+			  filename <- paste0(comparison, ".csv")
+			  filepath <- file.path(d, "between_samples", filename)
+			  write.csv(df, filepath, row.names=F)
+
+			  # html
+			  table <- kable(df)
+			  opts <- c("striped", "hover", "condensed", "responsive")
+			  table <- kable_styling(table, bootstrap_options=opts)
+			  table <- scroll_box(table, width="100%", height="400px")
+
+			  # rmarkdown printing
+			  #title <- paste( c1 , c2 , sep=" VS " )
+			  title <- paste( "Cluster" , gsub("^.*\\.(\\d)$", "\\1", c1) )
+			  cat( paste0("### ", title, " {.tabset}\n\n") )
+			  cat(table)
+
+			  return(df)
+		  })
+
+# merge all the comparisons and compute an adjusted p-value
+df_deg <- as.data.frame( do.call(rbind, diff_genes) )
+df_deg[,"padj"] <-
+	p.adjust(
+			 df_deg[,"p_val"],
+			 method="bonferroni",
+			 n=nrow(both_samples)*length(comparisons)
+			 )
+df_deg[,"Cluster"] <- gsub("^.*\\.(\\d)$", "\\1", df_deg[,"Cluster1"])
+df_deg[,"Comparison"] <- paste(
+										 df_deg[,"Cluster1"],
+										 df_deg[,"Cluster2"],
+										 sep=" VS "
+										 )
+cols <-
+	c(
+	  "Cluster",
+	  "Gene",
+	  "pct.1",
+	  "pct.2",
+	  "avg_logFC",
+	  "p_val",
+	  "padj"
+	  )
+df_deg <- df_deg[,cols]
+df_deg <- df_deg[ df_deg[,"padj"] < .05 , ]
+
+# save
+d <- "analysis/analysis2/spreadsheets/cluster_comparisons"
+filepath <- file.path(d, "between_samples.csv")
+write.csv(df_deg, filepath, row.names=F)
+
+```
+
+## Merge
+
+Here we take all the genes tested previously for each cluster, put them together and finally readjust the p-value.
+Only the significant ones are kept this time (<0.05).
+
+```{r between_samples_merge, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE }
+
+
+## BETWEEN_SAMPLES_MERGE
+
+d <- "analysis/analysis2/spreadsheets/cluster_comparisons"
+filepath <- file.path(d, "between_samples.csv")
+df <- read.csv(filepath)
+DT::datatable(df)
+
+```
+
+## Ontology {.tabset}
+
+```{r between_samples_ontology, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE }
+
+
+## BETWEEN_SAMPLES_ONTOLOGY
+
+d <- "analysis/analysis2/spreadsheets/cluster_comparisons"
+filepath <- file.path(d, "between_samples.csv")
+df <- read.csv(filepath)
+
+# threshold
+signif <- by(df, df[,"Cluster"], function(d)d[d[,"padj"]<.05,])
+
+# different types of ontologies
+sub_ontologies <-
+	list(
+		  "BP"="Biological Process",
+		  "MF"="Molecular Function",
+		  "CC"="Cellular Component"
+		  )
+
+# output directory
+d <- file.path(
+					"analysis",
+					"analysis2",
+					"spreadsheets",
+					"ontology",
+					"between_samples"
+					)
+
+# output directory
+dir.create(d, recursive=T, showWarnings=F)
+
+# all the clusters
+for ( n in names(signif) ) {
+
+	cat("### Cluster", n, "{.tabset}\n\n")
+	df <- signif[[n]]
+	features <- df[,"Gene"]
+
+	for ( nn in names(sub_ontologies) ) {
+
+		ego <- clusterProfiler::enrichGO(
+								gene=features,
+								OrgDb=org.Mm.eg.db,
+								ont=nn,
+								keyType="SYMBOL",
+								pAdjustMethod="BH",
+								pvalueCutoff=.01,
+								qvalueCutoff=.05
+								)
+
+		# save
+		filename <- paste0("cluster_", n, "_", nn, ".csv")
+		filepath <- file.path(d, filename)
+		write.csv(ego, filepath)
+
+		cat( paste("####", sub_ontologies[[nn]], "{.tabset}\n\n") )
+		tab <-
+			knitr::kable( as.data.frame(ego) ) %>%
+				kableExtra::kable_styling() %>%
+					scroll_box(width="100%", height = "400px")
+		print(tab)
+	}
+}
+
+```
+
+## Average plots {.tabset}
+
+In order to visualize the significant genes, we can plot, for each cluster, the gene counts of the two treatments against each other (log scale).
+The significant genes should appear as dots deviating from the central olique line.
+We labeled the 30 first most significant genes for each cluster.
+
+```{r avg, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE }
+
+
+## AVG
+
+# load matrix
+obj <- load("analysis/analysis2/rda/integration_umap.rda")
+both_samples <- get(obj)
+Seurat::DefaultAssay(both_samples) <- "RNA"
+cd_order <- as.character( readLines("input/plot/conditions.txt") )
+condition <- both_samples@meta.data[,"condition"]
+both_samples@meta.data[,"condition"] <- factor(condition, levels=cd_order)
+
+# load genes
+d <- "analysis/analysis2/spreadsheets/cluster_comparisons"
+filepath <- file.path(d, "between_samples.csv")
+df <- read.csv(filepath)
+
+clusters <- levels(both_samples$seurat_clusters)
+
+# output directory
+dir.create("analysis/analysis2/plots/avg", recursive=T, showWarnings=F)
+
+for ( c in clusters ) {
+
+	# compute an "average cell" for each gene of this cluster per condition
+	cluster <- subset(both_samples, idents=c)
+	Seurat::Idents(cluster) <- "condition"
+	avg <- log1p( Seurat::AverageExpression(cluster, verbose=F)$RNA )
+	avg[,"gene"] <- as.character(rownames(avg))
+	names(avg) <- gsub("IgG control", "IgG.control", names(avg))
+	names(avg) <- gsub("anti-Skint1", "anti.Skint1", names(avg))
+
+	# gene names
+	subdf <- df[ df[,"Cluster"] == c , ]
+	o <- order( subdf[,"padj"] )
+	genes <- as.character( subdf[ o[1:min(10, length(o))] , "Gene" ] )
+	genes <- na.omit(genes)
+	avg[,"label"] <- ifelse( avg[,"gene"] %in% genes, avg[,"gene"], "" )
+
+	# plot with in log scale
+	aes <- aes_string(x="IgG.control", y="anti.Skint1", label="label")
+	g <- ggplot(avg, aes)
+	g <- g + geom_point()
+	g <- g + geom_text(aes_string(label="label", vjust=1, hjust=1))
+	g <- g + ggtitle( paste("Cluster", c) )
+	g <- g + ylab("anti-Skint1")
+	g <- g + xlab("IgG control")
+
+	# save the plot
+	basename <- paste0("integration_cluster", c, "_avg")
+	basepath <- file.path("analysis/analysis2/plots/avg", basename)
+	ggsave( paste0(basepath, ".pdf") , g )
+	ggsave( paste0(basepath, ".png") , g )
+
+	# display
+	png <- paste0(basepath, ".png")
+	cat( paste0("### Cluster ", c, " {.tabset}\n\n") )
+	cat( paste0('<img src="', png, '">\n\n') )
+}
+
+
+```
+
+## Markers plots {.tabset}
+
+For each cluster we plot the expression values of all the significant (<0.05) genes on the UMAP.
+There are two kind of plots. One with all the cells independently of the treatment, and another one where the cells have been split by treatment.
+
+
+```{r between_samples_plots, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE }
+
+
+## BETWEEN_SAMPLES_PLOTS
+
+# output directory
+dir.create("analysis/analysis2/plots/cluster_comparisons/between_samples",
+			  recursive=T, showWarnings=F)
+
+###############
+plot_marker <-#
+###############
+	function(row, split=F) {
+
+		# current plot
+		cluster <- row[,"Cluster"]
+		gene <- as.character(row[,"Gene"])
+
+		# output path
+		d <- file.path(
+					   "analysis",
+					   "analysis2",
+					   "plots",
+					   "cluster_comparisons",
+					   "between_samples"
+					   )
+		basename <- paste0("cluster", cluster, "_", gene)
+		basepath <- file.path(d, basename)
+
+		# if the gene is not in matrix
+		genes <- rownames(both_samples@assays[[1]]@counts)
+		nfound_label <- paste(gene, "not found" )
+		g_nfound <- ggplot(data.frame(x=5, y=5), aes(x=x, y=y))
+		g_nfound <- g_nfound + geom_text(aes(x=5, y=5, label=nfound_label))
+
+		if ( split == F ) {
+
+			if ( ! gene %in% genes ) {
+
+				g <- g_nfound
+
+			} else {
+
+				g <- Seurat::FeaturePlot(both_samples, features=gene)
+			}
+
+			ggsave(g, file=paste0(basepath, ".pdf"))
+			png <- paste0(basepath, ".png")
+			ggsave(g, file=png)
+
+		} else {
+
+			if ( ! gene %in% genes ) {
+
+				g <- g_nfound
+
+			} else {
+
+				g <-
+					Seurat::FeaturePlot(
+										both_samples,
+										features=gene,
+										split.by="condition",
+										min.cutoff=0
+										)
+			}
+
+			basepath <- paste0(basepath, "_split")
+			ggsave(g, file=paste0(basepath, ".pdf"), width=7, height=3.5)
+			png <- paste0(basepath, ".png")
+			ggsave(g, file=png, width=7, height=3.5)
+		}
+
+		cat( paste0("##### ", gene, " {.tabset}\n\n") )
+		cat( paste0('<img src="', png, '">\n\n') )
+
+		return(g)
+	}
+
+# load matrix
+obj <- load("analysis/analysis2/rda/integration_umap.rda")
+both_samples <- get(obj)
+Seurat::DefaultAssay(both_samples) <- "RNA"
+cd_order <- as.character( readLines("input/plot/conditions.txt") )
+condition <- both_samples@meta.data[,"condition"]
+both_samples@meta.data[,"condition"] <- factor(condition, levels=cd_order)
+
+# load genes
+d <- "analysis/analysis2/spreadsheets/cluster_comparisons"
+filepath <- file.path(d, "between_samples.csv")
+df <- read.csv(filepath)
+
+# plot marker genes
+plots <-
+	by(
+	   df,
+	   df[,"Cluster"],
+	   function(dd) {
+
+			ddf <- dd[ order(dd[,"padj"])[1:10] , ]
+
+		   cluster <- ddf[1,"Cluster"]
+		   cat( paste0("### Cluster ", cluster, " {.tabset}\n\n") )
+
+		   cat("#### Grouped {.tabset}\n\n")
+		   gboth <- by(ddf, ddf[,"Gene"], function(r)plot_marker(r))
+
+		   cat("#### Split {.tabset}\n\n")
+		   gsplit <- by(ddf, ddf[,"Gene"], function(r)plot_marker(r, T))
+	   })
+
+```
+
+## Violon plots {.tabset}
+
+For each cluster we plot the expression values of all the significant (<0.05) genes for each cell.
+
+
+```{r between_samples_vplots, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE }
+
+
+## BETWEEN_SAMPLES_VPLOTS
+
+# output directory
+dir.create("analysis/analysis2/plots/cluster_comparisons/between_samples",
+			  recursive=T, showWarnings=F)
+
+###############
+violon_plot <-#
+###############
+	function(row, split=F) {
+
+		# current plot
+		cluster <- row[,"Cluster"]
+		gene <- as.character(row[,"Gene"])
+
+		# output path
+		d <- file.path(
+					   "analysis",
+					   "analysis2",
+					   "plots",
+					   "cluster_comparisons",
+					   "between_samples"
+					   )
+		basename <- paste0("violon_cluster", cluster, "_", gene)
+		basepath <- file.path(d, basename)
+
+		# if the gene is not in matrix
+		genes <- rownames(both_samples@assays[[1]]@counts)
+		nfound_label <- paste(gene, "not found")
+		g_nfound <- ggplot(data.frame(x=5, y=5), aes(x=x, y=y))
+		g_nfound <- g_nfound + geom_text(aes(x=5, y=5, label=nfound_label))
+
+		if ( split == F ) {
+
+			if ( ! gene %in% genes ) {
+
+				g <- g_nfound
+
+			} else {
+
+				g <- Seurat::VlnPlot(both_samples, features=gene, pt.size=.3)
+			}
+
+			ggsave(g, file=paste0(basepath, ".pdf"))
+			png <- paste0(basepath, ".png")
+			ggsave(g, file=png)
+
+		} else {
+
+			if ( ! gene %in% genes ) {
+
+				g <- g_nfound
+
+			} else {
+
+				g <-
+					Seurat::VlnPlot(
+										both_samples,
+										features=gene,
+										split.by="condition",
+										pt.size=.3
+										)
+			}
+
+			basepath <- paste0(basepath, "_split")
+			ggsave(g, file=paste0(basepath, ".pdf"), width=7, height=3.5)
+			png <- paste0(basepath, ".png")
+			ggsave(g, file=png, width=7, height=3.5)
+		}
+
+		cat( paste0("##### ", gene, " {.tabset}\n\n") )
+		cat( paste0('<img src="', png, '">\n\n') )
+
+		return(g)
+	}
+
+# load matrix
+obj <- load("analysis/analysis2/rda/integration_umap.rda")
+both_samples <- get(obj)
+Seurat::DefaultAssay(both_samples) <- "RNA"
+cd_order <- c("IgG control", "anti-Skint1")
+condition <- both_samples@meta.data[,"condition"]
+both_samples@meta.data[,"condition"] <- factor(condition, levels=cd_order)
+
+# load genes
+d <- "analysis/analysis2/spreadsheets/cluster_comparisons"
+filepath <- file.path(d, "between_samples.csv")
+df <- read.csv(filepath)
+
+# violon plots
+violon_plots <-
+	by(
+	   df,
+	   df[,"Cluster"],
+	   function(dd) {
+
+		   ddf <- dd[ order(dd[,"padj"])[1:10] , ]
+
+		   cluster <- ddf[1,"Cluster"]
+		   cat( paste0("### Cluster ", cluster, " {.tabset}\n\n") )
+
+		   cat("#### Grouped {.tabset}\n\n")
+		   gboth <- by(ddf, ddf[,"Gene"], function(r)violon_plot(r))
+
+		   cat("#### Split {.tabset}\n\n")
+		   gsplit <- by(ddf, ddf[,"Gene"], function(r)violon_plot(r, T))
+	   })
+
+
+```
+
+## GSEA
+
+Here we run GSEA for the all comparisons we did in this section.
+We don't make any plot or table because GSEA makes them for us.
+The results can be found in `analysis_part_2_detcs/gsea/between_samples`.
+
+```{r between_samples_gsea, echo=TRUE, include=TRUE, results='hide', message=FALSE, warning=FALSE, cache=TRUE, strip.white=TRUE }
+
+## BETWEEN_SAMPLES_GSEA
+
+# load
+dirpath <-
+	"analysis/analysis2/spreadsheets/cluster_comparisons/between_samples"
+files <- sort(list.files(dirpath, full.names=T))
+comparisons_names <- gsub(".*/(.*).csv", "\\1", files)
+names(files) <- gsub(" |-", "_", comparisons_names)
+
+# gsea conf
+java_md  <- "Java/1.8.0_131"
+jarpath <- "/camp/stp/babs/working/bahn/programs/java/gsea/gsea-3.0.jar"
+gmt_files <- sort(list.files("input/gsea", full.names=T))
+names(gmt_files) <- gsub(".*/(\\w+)\\..*.gmt", "\\1", gmt_files)
+
+# output directories
+dir.create("analysis/analysis2/rnk/between_samples", recursive=T,
+			  showWarnings=F)
+
+template <- "
+module load %s
+java -Xmx10g -cp %s \\
+	xtools.gsea.GseaPreranked \\
+	-gmx %s \\
+	-nperm 1000 \\
+	-scoring_scheme classic \\
+	-norm meandiv \\
+	-rnk %s \\
+	-gui false \\
+	-out %s \\
+	-rpt_label %s \\
+	-set_min 3 \\
+	-set_max 50000 \\
+	-rnd_seed timestamp \\
+	-plot_top_x 50 \\
+	-zip_report false \\
+	-make_sets true \\
+	-create_svgs false
+"
+
+for ( n in names(files) ) {
+
+	df <- read.csv(files[[n]])
+	df <- df[ order(df[,"avg_logFC"], decreasing=T) , ]
+	rnk <- data.frame(
+							"symbol"=toupper(df[,"Gene"]),
+							"avg_logFC"=df[,"avg_logFC"]
+							)
+
+	rnk_name <- paste0(n, ".rnk")
+	rnk_path <- file.path("analysis/analysis2/rnk/between_samples", rnk_name)
+	print(rnk_path)
+	write.table(rnk, file=rnk_path, quote=F, row.names=F, sep="\t")
+
+	for ( gmt in names(gmt_files) ) {
+		label <- paste("between_samples", n, gmt, sep="_")
+		out_dir <- file.path("analysis/analysis2/gsea/between_samples", n, gmt)
+		dir.create(out_dir, recursive=T, showWarnings=F)
+		command <- sprintf(template, java_md, jarpath, gmt_files[[gmt]],
+								 rnk_path, out_dir, label)
+		cat(command)
+		system(command)
+	}
+}
+
+```
+
+# All the clusters together
+
+Here we just perform differential expression analysis on all the clusters pooled together.
+We still use `FindMarkers`.
+
+Usually, this part is performed with parameters that reduce the number of cells and genes to test.
+This allows to reduce the computing time, and also it attenuate the effect of multiple testing correction.
+However, GSEA requires to be provided with the full list of genes.
+So, we changed the parameters so the function tests and returns almost all the genes.
+
+More precisely, the parameters were the following:
+
+ * `test.use` was set to *wilcox*, which means we use the Wilcoxon test,
+ * `logfc.threshold` was set to *0*, which means we test all the genes even if the log fold change between the two groups is low,
+ * `min.pct` were set to *0*, which means we test all the genes even if they are detected in a very few percentage of the cells,
+ * `min.diff.pct` was set to `-Inf`, which means we test all the genes even if there is no difference in the fraction of detection between the two groups,
+ * `min.cells.group` was set to `0`, which means we test even if the number of cells in the groups is low.
+
+<span style="color:red">This parametrization affects the multiple testing correction.</span>
+<span style="color:red">So, it affect the adjusted p-values.</span>
+However, GSEA shouldn't be run without that.
+
+
+```{r all_clusters, echo=TRUE, include=TRUE, results='hide', message=FALSE, warning=FALSE, cache=TRUE, strip.white=TRUE }
+
+
+## ALL_CLUSTERS
+
+# parallelization
+BiocParallel::register(MulticoreParam(24))
+base::options(future.globals.maxSize = 1000 * 1024^2 )
+future::plan("multiprocess", workers=24)
+
+# load
+obj <- load("analysis/analysis2/rda/integration_umap.rda")
+both_samples <- get(obj)
+Seurat::DefaultAssay(both_samples) <- "RNA"
+
+# order on the plot
+cd_order <- as.character( readLines("input/plot/conditions.txt") )
+condition <- both_samples@meta.data[,"condition"]
+both_samples@meta.data[,"condition"] <- factor(condition, levels=cd_order)
+
+# differential expression
+Seurat::Idents(both_samples) <- "condition"
+markers <-
+	Seurat::FindMarkers(
+							  both_samples,
+							  ident.1="anti-Skint1",
+							  ident.2="IgG control",
+							  features=rownames(both_samples),
+							  logfc.threshold=0,
+							  min.pct=0,
+							  min.cells.feature=0,
+							  min.cells.group=0
+							  )
+markers[,"gene"] <- rownames(markers)
+
+# output directory
+dir.create("analysis/analysis2/spreadsheets/all_clusters",
+			  recursive=T, showWarnings=F)
+
+# save
+d <- ("analysis/analysis2/spreadsheets/all_clusters")
+filename <- "markers.csv"
+filepath <- file.path(d, filename)
+write.csv(markers, file=filepath, row.names=F)
+
+```
+
+## Table
+
+```{r all_clusters_table, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE }
+
+
+## ALL_CLUSTERS_TABLE
+
+dir.create("analysis/analysis2/spreadsheets/ontology/all_clusters",
+			  recursive=T, showWarnings=F)
+
+d <- ("analysis/analysis2/spreadsheets/all_clusters")
+filename <- "markers.csv"
+filepath <- file.path(d, filename)
+markers <- read.csv(filepath)
+DT::datatable(markers)
+
+```
+
+## Scatter plots {.tabset}
+
+```{r all_clusters_plots, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE }
+
+
+## ALL_CLUSTERS_PLOTS
+
+# output directory
+dir.create("analysis/analysis2/plots/all_clusters",
+			  recursive=T, showWarnings=F)
+
+###############
+plot_marker <-#
+###############
+	function(gene, split=F) {
+
+		# output path
+		d <- file.path(
+					   "analysis",
+					   "analysis2",
+						"plots",
+					   "all_clusters"
+					   )
+		basepath <- file.path(d, gene)
+
+		# if the gene is not in matrix
+		genes <- rownames(both_samples@assays[[1]]@counts)
+		nfound_label <- paste(gene, "not found" )
+		g_nfound <- ggplot(data.frame(x=5, y=5), aes(x=x, y=y))
+		g_nfound <- g_nfound + geom_text(aes(x=5, y=5, label=nfound_label))
+
+		if ( split == F ) {
+
+			if ( ! gene %in% genes ) {
+
+				g <- g_nfound
+
+			} else {
+
+				g <- Seurat::FeaturePlot(both_samples, features=gene)
+			}
+
+			ggsave(g, file=paste0(basepath, ".pdf"))
+			png <- paste0(basepath, ".png")
+			ggsave(g, file=png)
+
+		} else {
+
+			if ( ! gene %in% genes ) {
+
+				g <- g_nfound
+
+			} else {
+
+				g <-
+					Seurat::FeaturePlot(
+										both_samples,
+										features=gene,
+										split.by="condition",
+										min.cutoff=0
+										)
+			}
+
+			basepath <- paste0(basepath, "_split")
+			ggsave(g, file=paste0(basepath, ".pdf"), width=7, height=3.5)
+			png <- paste0(basepath, ".png")
+			ggsave(g, file=png, width=7, height=3.5)
+		}
+
+		cat( paste0('<img src="', png, '">\n\n') )
+
+		return(g)
+	}
+
+# load matrix
+obj <- load("analysis/analysis2/rda/integration_umap.rda")
+both_samples <- get(obj)
+Seurat::DefaultAssay(both_samples) <- "RNA"
+cd_order <- as.character( readLines("input/plot/conditions.txt") )
+condition <- both_samples@meta.data[,"condition"]
+both_samples@meta.data[,"condition"] <- factor(condition, levels=cd_order)
+
+# load markers
+d <- ("analysis/analysis2/spreadsheets/all_clusters")
+filename <- "markers.csv"
+filepath <- file.path(d, filename)
+markers <- read.csv(filepath)
+
+genes <- markers[ order(markers[,"p_val_adj"])[1:20] , "gene" ]
+
+for ( gene in genes ) {
+
+	cat( paste0("### ", gene, " {.tabset}\n\n") )
+	cat("#### Grouped {.tabset}\n\n")
+	gboth <- plot_marker(gene)
+	cat("#### Split {.tabset}\n\n")
+	gboth <- plot_marker(gene, T)
+}
+
+```
+
+## Ontology {.tabset}
+
+```{r all_clusters_ontology, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE }
+
+
+## ALL_CLUSTERS_ONTOLOGY
+
+# output directory
+dir.create("analysis/analysis2/spreadsheets/ontology/all_clusters",
+			  recursive=T, showWarnings=F)
+
+# load markers
+d <- ("analysis/analysis2/spreadsheets/all_clusters")
+filename <- "markers.csv"
+filepath <- file.path(d, filename)
+markers <- read.csv(filepath)
+signif <- markers[ markers[,"p_val_adj"] < .05 , ]
+genes <- sort( signif[,"gene"] )
+
+# different types of ontologies
+sub_ontologies <-
+	list(
+		  "BP"="Biological Process",
+		  "MF"="Molecular Function",
+		  "CC"="Cellular Component"
+		  )
+
+# output directory
+d <- file.path(
+					"analysis",
+					"analysis2",
+					"spreadsheets",
+					"ontology",
+					"all_clusters"
+					)
+
+for ( onto in names(sub_ontologies) ) {
+
+	ego <- clusterProfiler::enrichGO(
+							gene=genes,
+							OrgDb=org.Mm.eg.db,
+							ont=onto,
+							keyType="SYMBOL",
+							pAdjustMethod="BH",
+							pvalueCutoff=.01,
+							qvalueCutoff=.05
+						)
+
+	# save
+	filename <- paste0(onto, ".csv")
+	filepath <- file.path(d, filename)
+	write.csv(ego, filepath)
+
+	cat( paste("### ", sub_ontologies[[onto]], "{.tabset}\n\n") )
+	tab <-
+		knitr::kable( as.data.frame(ego) ) %>%
+			kableExtra::kable_styling() %>%
+				scroll_box(width="100%", height = "400px")
+	print(tab)
+}
+
+```
+
+## GSEA
+
+Here we run GSEA for the all comparisons we did in this section.
+We don't make any plot or table because GSEA makes them for us.
+The results can be found in `analysis_part_2_detcs/gsea/all_clusters`.
+
+```{r all_clusters_gsea, echo=TRUE, include=TRUE, results='hide', message=FALSE, warning=FALSE, cache=TRUE, strip.white=TRUE }
+
+## ALL_CLUSTERS_GSEA
+
+# load
+path <- "analysis/analysis2/spreadsheets/all_clusters/markers.csv"
+df <- read.csv(path)
+
+# gsea conf
+java_md  <- "Java/1.8.0_131"
+jarpath <- "/camp/stp/babs/working/bahn/programs/java/gsea/gsea-3.0.jar"
+gmt_files <- sort(list.files("input/gsea", full.names=T))
+names(gmt_files) <- gsub(".*/(\\w+)\\..*.gmt", "\\1", gmt_files)
+
+# output directories
+dir.create("analysis/analysis2/rnk/all_clusters", recursive=T, showWarnings=F)
+
+template <- "
+module load %s
+java -Xmx10g -cp %s \\
+	xtools.gsea.GseaPreranked \\
+	-gmx %s \\
+	-nperm 1000 \\
+	-scoring_scheme classic \\
+	-norm meandiv \\
+	-rnk %s \\
+	-gui false \\
+	-out %s \\
+	-rpt_label %s \\
+	-set_min 3 \\
+	-set_max 50000 \\
+	-rnd_seed timestamp \\
+	-plot_top_x 50 \\
+	-zip_report false \\
+	-make_sets true \\
+	-create_svgs false
+"
+
+# rank file
+df <- df[ order(df[,"avg_logFC"], decreasing=T) , ]
+rnk <- data.frame(
+						"symbol"=toupper(df[,"gene"]),
+						"avg_logFC"=df[,"avg_logFC"]
+						)
+
+rnk_path <- file.path("analysis/analysis2/rnk/all_clusters", "markers.rnk")
+write.table(rnk, file=rnk_path, quote=F, row.names=F, sep="\t")
+
+for ( gmt in names(gmt_files) ) {
+	label <- paste("all_clusters", gmt, sep="_")
+	out_dir <- file.path("analysis/analysis2/gsea/all_clusters", gmt)
+	dir.create(out_dir, recursive=T, showWarnings=F)
+	command <- sprintf(template, java_md, jarpath, gmt_files[[gmt]],
+							 rnk_path, out_dir, label)
+	cat(command)
+	system(command)
+}
+
+```
+
+# Cell cycle {.tabset}
+
+```{r cell_cycle, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE}
+
+
+## CELL_CYCLE
+
+##############
+cell_cycle <-#
+##############
+	function(sample, npcs, name) {
+
+		plotname <- paste0("analysis/analysis2/plots/", name)
+		csvname <- paste0("analysis/analysis2/spreadsheets/", name)
+
+		# convert cell cycle genes to mouse notation
+		s.genes <- Hmisc::capitalize(tolower(cc.genes$s.genes))
+		g2m.genes <- Hmisc::capitalize(tolower(cc.genes$g2m.genes))
+
+		sample <- Seurat::CellCycleScoring(
+													  sample,
+													  s.features=s.genes,
+													  g2m.features=g2m.genes,
+													  set.ident=T
+													  )
+
+		pca <- Seurat::RunPCA(sample, features=c(s.genes, g2m.genes), npcs=npcs)
+
+		g <- Seurat::DimPlot(pca, reduction="pca")
+
+		ggplot2::ggsave( g , file=paste0(plotname, "_pca.pdf") )
+		ggplot2::ggsave( g , file=paste0(plotname, "_pca.png") )
+
+		g <- Seurat::DimPlot(sample, reduction="umap")
+
+		ggplot2::ggsave( g , file=paste0(plotname, "_umap.pdf") )
+		ggplot2::ggsave( g , file=paste0(plotname, "_umap.png") )
+
+		md <- sample@meta.data
+		md[,"Phase"] <- factor(md[,"Phase"], levels=c("G1", "S", "G2M"))
+		cc <-
+			by(md, md[,"seurat_clusters"],
+				function(df) {
+					d <- data.frame("cluster"=rep(df[1, "seurat_clusters"], 3))
+					d <- cbind( d , table(df[,"Phase"]) )
+					names(d) <- c("cluster", "phase", "cell.count")
+					d[,"cell.percent"] <- d[,"cell.count"] / sum(d[,"cell.count"])
+					return(d)
+				})
+		cc <- as.data.frame( do.call(rbind, cc) )
+		rownames(cc) <- NULL
+		write.csv(cc, paste0(csvname, ".csv"), row.names=F)
+
+		g <- ggplot(cc, aes_string(x="cluster", y="cell.percent", fill="phase"))
+		g <- g + geom_bar(position="dodge2", stat="identity")
+		g <- g + xlab("Cluster") + ylab("Cell percentage") + labs(fill="Phase")
+		g <- g + theme(legend.position="top")
+
+		ggplot2::ggsave( g , file=paste0(plotname, "_percent.pdf") )
+		ggplot2::ggsave( g , file=paste0(plotname, "_percent.png") )
+
+		return(sample)
+	}
+
+# output directory
+dir.create("analysis/analysis2/plots", recursive=T, showWarnings=F)
+dir.create("analysis/analysis2/spreadsheets", recursive=T, showWarnings=F)
+
+# MCK332A1
+obj <- load("analysis/analysis2/rda/MCK332A1_umap.rda")
+sample1 <- get(obj)
+sample1 <-
+	cell_cycle(
+		sample=sample1,
+		npcs=100,
+		name="MCK332A1_cell_cycle"
+		)
+save(sample1, file="analysis/analysis2/rda/MCK332A1_cell_cycle.rda")
+
+# MCK332A2
+obj <- load("analysis/analysis2/rda/MCK332A2_umap.rda")
+sample2 <- get(obj)
+sample2 <-
+	cell_cycle(
+		sample=sample2,
+		npcs=100,
+		name="MCK332A2_cell_cycle"
+		)
+save(sample2, file="analysis/analysis2/rda/MCK332A2_cell_cycle.rda")
+
+# integration
+obj <- load("analysis/analysis2/rda/integration_umap.rda")
+both_samples <- get(obj)
+both_samples <-
+	cell_cycle(
+		sample=both_samples,
+		npcs=100,
+		name="integration_cell_cycle"
+		)
+save(both_samples, file="analysis/analysis2/rda/integration_cell_cycle.rda")
+
+# print umap plots
+cat("## UMAP plots {.tabset}\n\n")
+for ( n in c("MCK332A1", "MCK332A2", "integration") ) {
+	cat(paste0("### ", n, " {.tabset}\n\n"))
+	png <- paste0("analysis/analysis2/plots/", n, "_cell_cycle_umap.png")
+	cat(paste0('<img src="', png, '">\n\n'))
+}
+
+# print pca plots
+cat("## PCA plots {.tabset}\n\n")
+for ( n in c("MCK332A1", "MCK332A2", "integration") ) {
+	cat(paste0("### ", n, " {.tabset}\n\n"))
+	png <- paste0("analysis/analysis2/plots/", n, "_cell_cycle_pca.png")
+	cat(paste0('<img src="', png, '">\n\n'))
+}
+
+# print barcharts
+cat("## Cell counts {.tabset}\n\n")
+for ( n in c("MCK332A1", "MCK332A2", "integration") ) {
+
+	cat(paste0("### ", n, " {.tabset}\n\n"))
+
+	cat(paste0("#### Barchart {.tabset}\n\n"))
+	png <- paste0("analysis/analysis2/plots/", n, "_cell_cycle_percent.png")
+	cat(paste0('<img src="', png, '">\n\n'))
+
+	cat(paste0("#### Table {.tabset}\n\n"))
+	csv <- paste0("analysis/analysis2/spreadsheets/", n, "_cell_cycle.csv")
+	df <- read.csv(csv)
+	tab <-
+		knitr::kable( as.data.frame(df) ) %>%
+			kableExtra::kable_styling() %>%
+			scroll_box(width="100%", height = "400px")
+	print(tab)
+}
+
+```
+
+# Number of features {.tabset}
+
+The number of genes detected. Warning: the values are not normalised.
+
+```{r cluster_nfeat, echo=TRUE, include=TRUE, results='asis', message=FALSE, warning=FALSE, fig.keep='all', cache=TRUE, strip.white=TRUE}
+
+
+## CLUSTER_NFEAT
+
+## datasets
+#obj <- load("analysis/analysis2/rda/MCK332A1_umap.rda")
+#sample1 <- get(obj)
+#obj <- load("analysis/analysis2/rda/MCK332A2_umap.rda")
+#sample2 <- get(obj)
+#obj <- load("analysis/analysis2/rda/integration_umap.rda")
+#both_samples <- get(obj)
+
+# meta data
+md <- both_samples@meta.data
+col <- names(md)[ grep("integrated_snn.res.*", names(md)) ]
+md[,col] <- as.character(md[,col])
+
+## cluster annotation
+#annot <- read.csv("input/duncan/cluster_annotation.csv")
+#regex <- "^Neutrophils$|^Langerhans cells$"
+#annot[,"name"] <- gsub(regex, "Neutrophils/Langerhans cells", annot[,"name"])
+#annot[,"cluster"] <- as.character(annot[,"cluster"])
+#annot[,"cluster"] <- gsub(" \\(.*\\)$", "", annot[,"cluster"])
+#annot <- unique( annot[,c("cluster", "name")] )
+
+# get cells ids
+nfeats <-
+	by(md, md[,col],
+		function(x) {
+
+			# cells ids
+			ids <- rownames(x)
+			cells1 <- ids[ grep("*_1", ids) ]
+			cells1 <- gsub("_1$", "", cells1)
+			cells2 <- ids[ grep("*_2", ids) ]
+			cells2 <- gsub("_2$", "", cells2)
+			cells <- list("sample1"=cells1, "sample2"=cells2)
+
+			# counts 1
+			X1 <- as.matrix(Seurat::GetAssayData(sample1[,cells1]))
+			is_detected_1 <- rowSums(X1) > 0
+			detected_1 <- names( which( is_detected_1 == T ) )
+
+			# counts 2
+			X2 <- as.matrix(Seurat::GetAssayData(sample2[,cells2]))
+			is_detected_2 <- rowSums(X2) > 0
+			detected_2 <- names( which( is_detected_2 == T ) )
+
+			detected <- union(detected_1, detected_2)
+
+			nfeats <-
+				data.frame(
+							  "Cluster"=x[1,col],
+							  "IgG.control"=length(detected_1),
+							  "anti.Skint1"=length(detected_2),
+							  "Integration"=length(detected)
+							  )
+
+			return(nfeats)
+		})
+nfeats <- as.data.frame( do.call(rbind, nfeats) )
+nfeats_ <- melt(nfeats, id.vars="Cluster")
+names(nfeats_) <- c("Cluster", "Sample", "Count")
+nfeats_[,"Sample"] <- gsub("anti\\.Skint1", "anti-Skint1", nfeats_[,"Sample"])
+nfeats_[,"Sample"] <- gsub("IgG\\.control", "IgG control", nfeats_[,"Sample"])
+
+# plot params
+colors <- read.csv("input/plot/condition_colors.csv")
+colors <- setNames( as.character(colors[,"color"]) , colors[,"condition"] )
+colors <- setNames( c(colors, "#B79F00") , c(names(colors), "Integration") )
+conditions <- as.character( readLines("input/plot/conditions.txt") )
+conditions <- c( conditions , "Integration" )
+
+# order
+nfeats_[,"Sample"] <- factor(nfeats_[,"Sample"], levels=conditions)
+
+# plot
+g <- ggplot(nfeats_, aes_string(x="Cluster", fill="Sample", y="Count"))
+#g <- g + geom_bar(position=position_dodge2(reverse=T), stat="identity")
+g <- g + geom_bar(position=position_dodge2(reverse=F), stat="identity")
+g <- g + scale_fill_manual(values=colors)
+#g <- g + coord_flip()
+dir.create("analysis/analysis2/plots", recursive=T, showWarnings=F)
+basename <- "analysis/analysis2/plots/nfeat_cluster"
+ggplot2::ggsave(paste0(basename, ".pdf"), g)
+ggplot2::ggsave(paste0(basename, ".png"), g)
+
+# rmarkdown
+cat("## Table \n\n")
+DT::datatable(nfeats, rownames=F)
+cat("## Barchart \n\n")
+cat( paste0('\n\n<img src="', basename, '.png">\n\n') )
+
+```
+
+
+# Session information
+
+```{r}
+sessionInfo()
+```
